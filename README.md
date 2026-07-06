@@ -113,6 +113,12 @@ Two invariants drive everything:
 Mouse: clicking an item selects it (and cds); clicking empty sidebar space
 focuses the sidebar, selecting Home if nothing was selected.
 
+The selected row draws as the same rounded pill yazi uses for its file
+cursor (the caps come from your theme's `th.indicator.padding`), inset one
+cell from the column edges. Without configured selection colors, the
+list-focused fallback is plain bold text — no pill, since there is no
+background color to shape the caps with.
+
 `plugin nice-sidebar refresh` manually rescans mounted volumes (rescans also
 happen on navigation, throttled, and on mount events when yazi publishes
 them).

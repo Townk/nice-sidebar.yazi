@@ -89,8 +89,15 @@ Rules:
 | Section header (H2) | default fg, bold | `section` |
 | Rules | `darkgray` | `separator` |
 | Item label + icon | default fg | `item` |
-| Selected item, sidebar focused | `reversed` full-width row | `selected_bg` / `selected_fg` (both set → replaces reversed) |
-| Selected item, list focused | bold (no bg) full-width row | `selected_inactive_bg` / `selected_inactive_fg` |
+| Selected item, sidebar focused | `reversed` pill | `selected_bg` / `selected_fg` (both set → replaces reversed) |
+| Selected item, list focused | bold text, no pill | `selected_inactive_bg` / `selected_inactive_fg` (both set → colored pill) |
+
+The selected row draws as **yazi's cursor pill**: rounded caps from
+`th.indicator.padding.open/close` around the highlighted body, inset 1 cell
+from each column edge (the label is pre-truncated so the close cap never
+clips). When no background color is available to shape a cap with (the
+portable bold default while the list holds focus), the row renders as plain
+bold text without the pill.
 | File cursor while sidebar focused | untouched | `cursor_bg` / `cursor_fg` (both set → restyles `th.indicator.current` on focus, restored on blur) |
 
 Every `colors` value accepts anything `ui.Style():fg()` takes (named ANSI or
@@ -119,7 +126,8 @@ Defaults (macOS):
 | Music | `~/Music` | `󰝚` |
 
 `~` in paths expands against `$HOME`. Entries whose path does not exist (or is
-not a directory) are hidden, not errors.
+not a directory) are hidden, not errors. Symlinks are followed — a symlinked
+entry that resolves to a directory counts (same for pins).
 
 ### 2. Pinned
 
@@ -143,9 +151,13 @@ Shown only when `ya.target_os() == "macos"` and `setup{ show_disks ~= false }`.
   mounted disk image / external drive). Selecting one cds to
   `/Volumes/<name>`.
 - Scanning is **async only** (never in the sync redraw path): a
-  `plugin nice-sidebar refresh` entry lists `/Volumes` with `fs.read_dir` and
-  classifies each volume via `diskutil info -plist` (`Command`), then publishes
-  the result into the sync VM (`ya.sync`) and repaints (`ui.render`).
+  `plugin nice-sidebar refresh` entry lists `/Volumes` with
+  `fs.read_dir(..., { resolve = true })` — resolve is required because
+  `Macintosh HD` is a symlink to `/` — and classifies each volume via
+  `diskutil info` plain-text output (`Command`, `output()`): `Protocol:
+  Disk Image` → image; `Internal: Yes` (Intel) or `Device Location:
+  Internal` (Apple Silicon) → internal; else external. The result is
+  published into the sync VM (`ya.sync`) and repainted (`ui.render`).
 - Triggers: once from `setup()` (via `ya.emit("plugin", ...)`), and re-triggered
   from the `cd`/`tab` events, throttled to at most one scan per 5 s. A scan
   failure keeps the previous list.

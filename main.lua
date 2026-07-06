@@ -152,13 +152,14 @@ function core.toggle(lines, path)
 end
 
 -- Classify `diskutil info <volume>` plain-text output. Protocol beats the
--- Internal flag: APFS system volumes report Internal, disk images report
--- their own protocol.
+-- internal flags: APFS system volumes report internal, disk images report
+-- their own protocol. Apple Silicon prints "Device Location: Internal";
+-- older machines print "Internal: Yes" — accept both.
 function core.disk_kind(text)
 	if text:match("Protocol:%s+Disk Image") then
 		return "image"
 	end
-	if text:match("Internal:%s+Yes") then
+	if text:match("Internal:%s+Yes") or text:match("Device Location:%s+Internal") then
 		return "internal"
 	end
 	return "external"
@@ -238,9 +239,13 @@ local function style(color, bold)
 	return s
 end
 
--- The selected row: configured colors when both halves of a pair are set,
--- else reversed (focused) / bold (unfocused) as portable defaults.
-local function sel_style(focused)
+-- The selected row draws as yazi's own cursor pill: rounded caps from
+-- th.indicator.padding around the highlighted body. Returns the body style
+-- and a cap style — a nil cap means no pill (the portable unfocused
+-- default is plain bold, which has no background color to shape a cap
+-- with). Configured colors when both halves of a pair are set, else
+-- reversed (focused) via the preset's Entity:style_rev trick.
+local function sel_pill(focused)
 	local c = S.cfg.colors
 	local bg, fg
 	if focused then
@@ -249,22 +254,27 @@ local function sel_style(focused)
 		bg, fg = c.selected_inactive_bg, c.selected_inactive_fg
 	end
 	if bg and fg then
-		local ok, s = pcall(function()
-			return ui.Style():fg(fg):bg(bg):bold()
+		local ok, body, cap = pcall(function()
+			return ui.Style():fg(fg):bg(bg):bold(), ui.Style():fg(bg)
 		end)
 		if ok then
-			return s
+			return body, cap
 		end
 	end
 	if focused then
-		local ok, s = pcall(function()
-			return ui.Style():reverse()
+		local ok, body, cap = pcall(function()
+			return ui.Style():reverse(true), ui.Style():bg("reset"):reverse(true)
 		end)
 		if ok then
-			return s
+			return body, cap
 		end
 	end
-	return ui.Style():bold()
+	return ui.Style():bold(), nil
+end
+
+local function pill_caps()
+	local p = th and th.indicator and th.indicator.padding
+	return (p and p.open) or "", (p and p.close) or ""
 end
 
 -- Restyle the file-list cursor while the sidebar holds focus (and restore
@@ -506,14 +516,30 @@ function M:setup(opts)
 					ln = ui.Line({ ui.Span("  " .. row.icon .. " " .. row.text):style(style(c.section, true)) })
 				elseif row.type == "item" then
 					local it = S.items[row.index]
-					local text = "  " .. it.icon .. " " .. it.label
 					if row.index == S.selected then
-						-- Full-width highlight: pad to the column edge.
-						local pad = math.max(0, w - ui.Line({ ui.Span(text) }):width())
-						ln = ui.Line({ ui.Span(text .. string.rep(" ", pad)):style(sel_style(focused)) })
-						ln:truncate({ max = w })
+						local body, cap = sel_pill(focused)
+						if cap then
+							-- The pill sits 1 cell in from each column edge;
+							-- the label is pre-truncated so the close cap
+							-- never gets clipped away.
+							local open, close = pill_caps()
+							local icon_w = ui.Line({ ui.Span(it.icon .. " ") }):width()
+							local label = core.truncate(it.label, math.max(1, w - 4 - icon_w))
+							local inner = it.icon .. " " .. label
+							local pad = math.max(0, w - 4 - ui.Line({ ui.Span(inner) }):width())
+							ln = ui.Line({
+								ui.Span(" "),
+								ui.Span(open):style(cap),
+								ui.Span(inner .. string.rep(" ", pad)):style(body),
+								ui.Span(close):style(cap),
+							})
+							ln:truncate({ max = w })
+						else
+							ln = ui.Line({ ui.Span("  " .. it.icon .. " " .. it.label):style(body) })
+							ln:truncate({ max = math.max(1, w - 1) })
+						end
 					else
-						ln = ui.Line({ ui.Span(text):style(style(c.item)) })
+						ln = ui.Line({ ui.Span("  " .. it.icon .. " " .. it.label):style(style(c.item)) })
 						ln:truncate({ max = math.max(1, w - 1) }) -- 1 cell of trailing padding
 					end
 				else -- blank
@@ -607,7 +633,9 @@ local last_disks = {}
 
 local function scan_disks(cfg)
 	local disks = {}
-	local files = fs.read_dir(Url("/Volumes"), {})
+	-- resolve: "Macintosh HD" is a symlink to / — without following it,
+	-- cha.is_dir is false and the internal disk vanishes from the list.
+	local files = fs.read_dir(Url("/Volumes"), { resolve = true })
 	if not files then
 		return last_disks
 	end
@@ -638,7 +666,8 @@ local function refresh()
 	end
 	local sections = { dirs = {}, pins = {}, disks = {} }
 	for _, d in ipairs(cfg.dirs) do
-		local cha = fs.cha(Url(d.path))
+		-- follow=true: a configured dir that is a symlink still counts.
+		local cha = fs.cha(Url(d.path), true)
 		if cha and cha.is_dir then
 			sections.dirs[#sections.dirs + 1] = d
 		end
@@ -647,7 +676,7 @@ local function refresh()
 		if line:sub(1, 1) == "/" then
 			-- Dead pins are hidden but stay in the file (a pin to an
 			-- unmounted volume survives the unmount).
-			local cha = fs.cha(Url(line))
+			local cha = fs.cha(Url(line), true)
 			if cha and cha.is_dir then
 				sections.pins[#sections.pins + 1] = { label = core.abbrev(line, cfg.home), path = line, icon = PIN_ICON }
 			end
@@ -683,7 +712,7 @@ end
 function M:entry(job)
 	local act = job.args and job.args[1]
 	if act == "refresh" then
-		refresh() -- Task 6
+		refresh()
 	elseif act == "pin" then
 		pin() -- Task 6
 	elseif act then
