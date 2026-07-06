@@ -101,6 +101,69 @@ function core.window(total, h, anchor)
 	return first, first + h - 1
 end
 
+-- Flatten the sections into render rows plus the ordered selectable item
+-- list. Empty pins/disks hide their whole section (header, rule, blank).
+function core.build(sections)
+	local rows, items = {}, {}
+	local function add(it)
+		items[#items + 1] = it
+		rows[#rows + 1] = { type = "item", index = #items }
+	end
+	rows[#rows + 1] = { type = "title" }
+	rows[#rows + 1] = { type = "rule" }
+	rows[#rows + 1] = { type = "blank" }
+	for _, it in ipairs(sections.dirs or {}) do
+		add(it)
+	end
+	local function section(text, icon, list)
+		if #list == 0 then
+			return
+		end
+		rows[#rows + 1] = { type = "blank" }
+		rows[#rows + 1] = { type = "header", text = text, icon = icon }
+		rows[#rows + 1] = { type = "rule", inset = true }
+		for _, it in ipairs(list) do
+			add(it)
+		end
+	end
+	section("Pinned", "󰐃", sections.pins or {})
+	section("Disks", "󰋊", sections.disks or {})
+	return rows, items
+end
+
+-- Toggle `path` in the pins line list. Only absolute paths survive the
+-- rewrite; duplicates collapse; order is preserved.
+function core.toggle(lines, path)
+	local out, seen, removed = {}, {}, false
+	for _, line in ipairs(lines) do
+		if line:sub(1, 1) == "/" and not seen[line] then
+			seen[line] = true
+			if line == path then
+				removed = true
+			else
+				out[#out + 1] = line
+			end
+		end
+	end
+	if not removed and path:sub(1, 1) == "/" then
+		out[#out + 1] = path
+	end
+	return out
+end
+
+-- Classify `diskutil info <volume>` plain-text output. Protocol beats the
+-- Internal flag: APFS system volumes report Internal, disk images report
+-- their own protocol.
+function core.disk_kind(text)
+	if text:match("Protocol:%s+Disk Image") then
+		return "image"
+	end
+	if text:match("Internal:%s+Yes") then
+		return "internal"
+	end
+	return "external"
+end
+
 local M = { core = core }
 
 return M

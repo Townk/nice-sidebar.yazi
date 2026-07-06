@@ -127,3 +127,70 @@ t("window: nil anchor pins to the top", function()
 	local first, last = core.window(20, 5, nil)
 	eq({ first, last }, { 1, 5 })
 end)
+
+-- build --------------------------------------------------------------------
+local dirs = { { label = "Home", path = "/u", icon = "h" }, { label = "Desk", path = "/u/d", icon = "d" } }
+t("build: dirs only — title block, no sections", function()
+	local rows, its = core.build({ dirs = dirs, pins = {}, disks = {} })
+	eq(#its, 2)
+	eq(rows[1], { type = "title" })
+	eq(rows[2], { type = "rule" })
+	eq(rows[3], { type = "blank" })
+	eq(rows[4], { type = "item", index = 1 })
+	eq(rows[5], { type = "item", index = 2 })
+	eq(#rows, 5)
+end)
+t("build: empty pins hide the whole Pinned section", function()
+	local rows = core.build({ dirs = dirs, pins = {}, disks = { { label = "X", path = "/Volumes/X", icon = "x" } } })
+	for _, row in ipairs(rows) do
+		if row.type == "header" then
+			eq(row.text, "Disks")
+		end
+	end
+end)
+t("build: sections carry header, inset rule, and items in order", function()
+	local rows, its = core.build({
+		dirs = dirs,
+		pins = { { label = "~/p", path = "/u/p", icon = "p" } },
+		disks = { { label = "X", path = "/Volumes/X", icon = "x" } },
+	})
+	eq(#its, 4)
+	eq(rows[6], { type = "blank" })
+	eq(rows[7], { type = "header", text = "Pinned", icon = "󰐃" })
+	eq(rows[8], { type = "rule", inset = true })
+	eq(rows[9], { type = "item", index = 3 })
+	eq(rows[10], { type = "blank" })
+	eq(rows[11], { type = "header", text = "Disks", icon = "󰋊" })
+	eq(rows[12], { type = "rule", inset = true })
+	eq(rows[13], { type = "item", index = 4 })
+	eq(its[3].path, "/u/p")
+	eq(its[4].path, "/Volumes/X")
+end)
+
+-- toggle -------------------------------------------------------------------
+t("toggle: adds a missing path", function()
+	eq(core.toggle({ "/a" }, "/b"), { "/a", "/b" })
+end)
+t("toggle: removes a present path", function()
+	eq(core.toggle({ "/a", "/b" }, "/a"), { "/b" })
+end)
+t("toggle: drops duplicates and relative junk on rewrite", function()
+	eq(core.toggle({ "/a", "/a", "junk", "" }, "/b"), { "/a", "/b" })
+end)
+t("toggle: refuses to add a non-absolute path", function()
+	eq(core.toggle({ "/a" }, "junk"), { "/a" })
+end)
+
+-- disk_kind ----------------------------------------------------------------
+t("disk_kind: disk images by protocol", function()
+	eq(core.disk_kind("   Protocol:                  Disk Image\n   Internal:                  No"), "image")
+end)
+t("disk_kind: internal fixed disks", function()
+	eq(core.disk_kind("   Protocol:                  Apple Fabric\n   Internal:                  Yes"), "internal")
+end)
+t("disk_kind: everything else is external", function()
+	eq(core.disk_kind("   Protocol:                  USB\n   Internal:                  No"), "external")
+end)
+t("disk_kind: unparseable output falls back to external", function()
+	eq(core.disk_kind(""), "external")
+end)
