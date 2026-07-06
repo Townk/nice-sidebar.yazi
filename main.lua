@@ -231,7 +231,7 @@ local DEFAULTS = {
 	title = "Yazi File Manager",
 	title_icon = "󰇥",
 	width = 26,
-	disk_icons = { internal = "󰋊", image = "", external = "󱊞" },
+	disk_icons = { internal = "󰋊", image = "", external = "󱊞" },
 	dirs = {
 		{ label = "Home", path = "~", icon = "󰠦" },
 		{ label = "Desktop", path = "~/Desktop", icon = "󰇄" },

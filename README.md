@@ -190,7 +190,7 @@ require("nice-sidebar"):setup({
 		{ label = "Music", path = "~/Music", icon = "󰝚" },
 	},
 	show_disks = true, -- macOS only; auto-hidden elsewhere
-	disk_icons = { internal = "󰋊", image = "", external = "󱊞" },
+	disk_icons = { internal = "󰋊", image = "", external = "󱊞" },
 	pins_file = nil, -- default: $XDG_STATE_HOME/yazi/nice-sidebar/pins
 	colors = { -- named ANSI or "#rrggbb"; nil = portable default
 		title = nil, -- H1 (default: magenta, bold)
