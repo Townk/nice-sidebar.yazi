@@ -20,7 +20,7 @@ mounted disks, with a keyboard focus model that stays out of your way.
   ━━━━━━━━━━━━━━━━━
   󰉋 ~/Projects/My proj
 
-  󰋊 Disks
+  🖴 Disks
   ━━━━━━━━━━━━━━━━━
   󰋊 Macintosh HD
    work disk image

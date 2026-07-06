@@ -58,7 +58,7 @@ resolves it by convention (same shape as `Reledia/hexyl.yazi`).
   ━━━━━━━━━━━━━━━━━
   󰉋 ~/Projects/My proj
 
-  󰋊 Disks
+  🖴 Disks
   ━━━━━━━━━━━━━━━━━
   󰋊 Macintosh HD
    work disk image
@@ -70,7 +70,7 @@ Rules:
   rule (`━`) spans `width - 2`.
 - Items render as `␣␣<icon>␣<label>` — 2 leading spaces, so item icons start at
   column 3.
-- Section headers (`󰐃 Pinned`, `󰋊 Disks`) get 1 extra leading space relative to
+- Section headers (`󰐃 Pinned`, `🖴 Disks`) get 1 extra leading space relative to
   the main title — their icon aligns with the item icons at column 3. Their rule
   is inset by the same amount and 2 cells shorter than the title rule.
 - One blank line between the title rule and the first item, and one blank line
@@ -91,6 +91,7 @@ Rules:
 | Item label + icon | default fg | `item` |
 | Selected item, sidebar focused | `reversed` pill | `selected_bg` / `selected_fg` (both set → replaces reversed) |
 | Selected item, list focused | bold text, no pill | `selected_inactive_bg` / `selected_inactive_fg` (both set → colored pill) |
+| File cursor while sidebar focused | untouched | `cursor_bg` / `cursor_fg` (both set → restyles `th.indicator.current` on focus, restored on blur) |
 
 The selected row draws as **yazi's cursor pill**: rounded caps from
 `th.indicator.padding.open/close` around the highlighted body, inset 1 cell
@@ -98,7 +99,6 @@ from each column edge (the label is pre-truncated so the close cap never
 clips). When no background color is available to shape a cap with (the
 portable bold default while the list holds focus), the row renders as plain
 bold text without the pill.
-| File cursor while sidebar focused | untouched | `cursor_bg` / `cursor_fg` (both set → restyles `th.indicator.current` on focus, restored on blur) |
 
 Every `colors` value accepts anything `ui.Style():fg()` takes (named ANSI or
 `#rrggbb`). The author's personal config passes hexes from the chezmoi theme

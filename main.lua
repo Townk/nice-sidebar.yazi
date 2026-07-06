@@ -127,7 +127,7 @@ function core.build(sections)
 		end
 	end
 	section("Pinned", "󰐃", sections.pins or {})
-	section("Disks", "󰋊", sections.disks or {})
+	section("Disks", "🖴", sections.disks or {})
 	return rows, items
 end
 
