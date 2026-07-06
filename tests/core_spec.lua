@@ -216,3 +216,33 @@ end)
 t("disk_kind: unparseable output falls back to external", function()
 	eq(core.disk_kind(""), "external")
 end)
+
+-- volume_name ----------------------------------------------------------------
+t("volume_name: extracts the label", function()
+	eq(
+		core.volume_name("   Device Node:   /dev/disk5s1\n   Volume Name:               work disk image\n"),
+		"work disk image"
+	)
+end)
+t("volume_name: missing or inapplicable yields nil", function()
+	eq(core.volume_name(""), nil)
+	eq(core.volume_name("   Volume Name:               Not applicable (no file system)\n"), nil)
+end)
+
+-- parse_mounts ---------------------------------------------------------------
+local MOUNT_OUTPUT = table.concat({
+	"/dev/disk3s1s1 on / (apfs, sealed, local, read-only, journaled)",
+	"devfs on /dev (devfs, local, nobrowse)",
+	"/dev/disk3s6 on /System/Volumes/VM (apfs, local, noexec, journaled, noatime, nobrowse)",
+	"/dev/disk3s5 on /System/Volumes/Data (apfs, local, journaled, nobrowse, protect)",
+	"map auto_home on /System/Volumes/Data/home (autofs, automounted, nobrowse)",
+	"/dev/disk5s1 on /Users/u/Projects/work (apfs, local, nodev, nosuid, journaled, nobrowse, mounted by u)",
+	"/dev/disk6s1 on /Volumes/ns test (apfs, local, nodev, nosuid, journaled, mounted by u)",
+	"/dev/disk7s1 on /Users/u/odd (dir) name (apfs, local, journaled)",
+}, "\n")
+t("parse_mounts: keeps only custom /dev mounts outside the system paths", function()
+	eq(core.parse_mounts(MOUNT_OUTPUT), { "/Users/u/Projects/work", "/Users/u/odd (dir) name" })
+end)
+t("parse_mounts: empty input yields nothing", function()
+	eq(core.parse_mounts(""), {})
+end)

@@ -148,8 +148,13 @@ Hidden entirely (header, rule, blank line) when there are no live pins.
 Shown only when `ya.target_os() == "macos"` and `setup{ show_disks ~= false }`.
 
 - Volumes = the entries of `/Volumes` (this includes `Macintosh HD` and any
-  mounted disk image / external drive). Selecting one cds to
-  `/Volumes/<name>`.
+  mounted disk image / external drive) **plus** any `/dev/disk*` mountpoint
+  from the `mount` table living outside the system paths (`/`, `/System/…`,
+  `/private/…`, `/Library/…`) — disk images attach at custom mountpoints
+  (e.g. a sparse bundle under `~/Projects`) and never appear in `/Volumes`.
+  Selecting one cds to its mountpoint. Labels use `diskutil`'s
+  `Volume Name` when available (a volume's label can differ from its
+  mountpoint basename), falling back to the basename.
 - Scanning is **async only** (never in the sync redraw path): a
   `plugin nice-sidebar refresh` entry lists `/Volumes` with
   `fs.read_dir(..., { resolve = true })` — resolve is required because
@@ -203,6 +208,11 @@ Two invariants tie the model together:
 - **`focus`** (binding: `<S-h>`/`<S-Left>`, global): give the sidebar focus.
   No-op when the sidebar already holds it (this is the "Shift+H from the
   sidebar is a no-op" rule).
+- **`blur [cmd args…]`** (bindings: `<S-Right>`, `<S-l>`): sidebar focused →
+  return focus to the file list (selection untouched). List focused → run
+  the fallthrough command given as the remaining keymap args, or nothing.
+  The fallthrough lets a key keep its stock behavior on the list side — e.g.
+  `plugin nice-sidebar blur plugin bypass` preserves `L`'s bypass binding.
 - **`h`** (bindings: `h`, `<Left>`): focus-scoped dispatch —
   sidebar focused → **no-op**; list focused at the filesystem root (the tab
   has no parent folder) → focus the sidebar; otherwise → `leave` (stock

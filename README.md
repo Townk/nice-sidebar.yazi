@@ -75,6 +75,8 @@ prepend_keymap = [
   { on = "<S-Down>",   run = "plugin nice-sidebar next",  desc = "Sidebar: select the next item" },
   { on = "H",          run = "plugin nice-sidebar focus", desc = "Sidebar: focus" },
   { on = "<S-Left>",   run = "plugin nice-sidebar focus", desc = "Sidebar: focus" },
+  { on = "<S-Right>",  run = "plugin nice-sidebar blur",  desc = "Sidebar: focus the file list" },
+  { on = "L",          run = "plugin nice-sidebar blur",  desc = "Sidebar: focus the file list" },
   { on = "h",          run = "plugin nice-sidebar h",     desc = "Leave; focus the sidebar at the root" },
   { on = "<Left>",     run = "plugin nice-sidebar h",     desc = "Leave; focus the sidebar at the root" },
   { on = "l",          run = "plugin nice-sidebar l",     desc = "Enter; leave the sidebar" },
@@ -106,6 +108,7 @@ Two invariants drive everything:
 | `H` / `Shift+Left` | focus the sidebar | nothing |
 | `h` / `Left` | leave; at `/`, focus the sidebar | nothing |
 | `l` / `Right` | enter | focus the file list |
+| `L` / `Shift+Right` | fallthrough (see below) | focus the file list |
 | `j` / `Down` | cursor down | select next sidebar item |
 | `k` / `Up` | cursor up | select previous sidebar item |
 | `b p` | pin/unpin the hovered directory | — |
@@ -119,9 +122,16 @@ cell from the column edges. Without configured selection colors, the
 list-focused fallback is plain bold text — no pill, since there is no
 background color to shape the caps with.
 
+`blur` accepts a fallthrough: any keymap args after it run as a command when
+the file list already holds focus. If you bind `L` and use a plugin there
+(e.g. [bypass](https://github.com/Rolv-Apneseth/bypass)), keep its behavior
+with `run = "plugin nice-sidebar blur plugin bypass"`.
+
 `plugin nice-sidebar refresh` manually rescans mounted volumes (rescans also
 happen on navigation, throttled, and on mount events when yazi publishes
-them).
+them). Disks cover `/Volumes` plus disk images attached at custom
+mountpoints (say, a sparse bundle mounted under `~/Projects`); labels use
+the volume's name, not its mountpoint.
 
 ## Configuration
 

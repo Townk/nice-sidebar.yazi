@@ -165,6 +165,42 @@ function core.disk_kind(text)
 	return "external"
 end
 
+-- The "Volume Name" field of `diskutil info` output — the label macOS
+-- shows for the volume, which can differ from the mountpoint basename.
+function core.volume_name(text)
+	local name = text:match("Volume Name:%s*([^\n]+)")
+	if name then
+		name = name:gsub("%s+$", "")
+		if name ~= "" and not name:match("^Not applicable") then
+			return name
+		end
+	end
+	return nil
+end
+
+-- Mountpoints of /dev/disk devices living outside /Volumes, from `mount`
+-- output — disk images and volumes attached at custom paths (e.g. a sparse
+-- bundle mounted under ~/Projects). System mounts and /Volumes entries
+-- (listed directly) are excluded. The trailing "(options)" group is
+-- anchored at end-of-line so mountpoints containing " (" survive.
+function core.parse_mounts(text)
+	local out = {}
+	for line in text:gmatch("[^\n]+") do
+		local path = line:match("^/dev/%S+ on (.+) %([^()]*%)%s*$")
+		if
+			path
+			and path ~= "/"
+			and not path:match("^/System/")
+			and not path:match("^/private/")
+			and not path:match("^/Library/")
+			and not path:match("^/Volumes/")
+		then
+			out[#out + 1] = path
+		end
+	end
+	return out
+end
+
 local M = { core = core }
 
 -- ----------------------------------------------------------------- state --
@@ -362,7 +398,7 @@ end
 -- --------------------------------------------------------------- bridges --
 -- Executed in the sync VM regardless of the calling context; registered at
 -- the top level so both VMs agree on the registration index.
-local nav = ya.sync(function(_, act)
+local nav = ya.sync(function(_, act, rest)
 	if not S.cfg then
 		return
 	end
@@ -371,6 +407,16 @@ local nav = ya.sync(function(_, act)
 		select_item(core.step(S.selected, act == "next" and 1 or -1, #S.items))
 	elseif act == "focus" then
 		focus_sidebar()
+	elseif act == "blur" then
+		-- Sidebar focused: hand focus back to the file list. List focused:
+		-- run the fallthrough command given as the remaining keymap args
+		-- (e.g. "plugin nice-sidebar blur plugin bypass" keeps L's stock
+		-- bypass behavior), or do nothing.
+		if S.focus == "sidebar" then
+			blur_sidebar()
+		elseif rest and rest[1] then
+			ya.emit(rest[1], { table.unpack(rest, 2) })
+		end
 	elseif act == "h" then
 		-- Sidebar focused: h/Left do nothing. List focused: leave, except
 		-- at the filesystem root, where one more "left" focuses the
@@ -631,8 +677,38 @@ end
 -- failed /Volumes read keeps showing it instead of blanking the section.
 local last_disks = {}
 
+-- output() waits; spawn() must NOT be used here — the discarded Child
+-- handle is killed on GC, racing the process to death.
+local function run(cmd, ...)
+	local args = { ... }
+	local ok, output = pcall(function()
+		local c = Command(cmd)
+		for _, a in ipairs(args) do
+			c = c:arg(a)
+		end
+		return c:stdout(Command.PIPED):stderr(Command.PIPED):output()
+	end)
+	if ok and output and output.status and output.status.success then
+		return output.stdout
+	end
+	return nil
+end
+
 local function scan_disks(cfg)
-	local disks = {}
+	local disks, seen = {}, {}
+	local function add(path)
+		if seen[path] then
+			return
+		end
+		seen[path] = true
+		local kind, label = "external", path:match("([^/]+)$") or path
+		local info = run("diskutil", "info", path)
+		if info then
+			kind = core.disk_kind(info)
+			label = core.volume_name(info) or label
+		end
+		disks[#disks + 1] = { label = label, path = path, icon = cfg.disk_icons[kind] }
+	end
 	-- resolve: "Macintosh HD" is a symlink to / — without following it,
 	-- cha.is_dir is false and the internal disk vanishes from the list.
 	local files = fs.read_dir(Url("/Volumes"), { resolve = true })
@@ -641,18 +717,16 @@ local function scan_disks(cfg)
 	end
 	for _, f in ipairs(files) do
 		if f.cha and f.cha.is_dir then
-			local path = tostring(f.url)
-			local name = path:match("([^/]+)$") or path
-			local kind = "external"
-			-- output() waits; spawn() must NOT be used here — the discarded
-			-- Child handle is killed on GC, racing the process to death.
-			local ok, output = pcall(function()
-				return Command("diskutil"):arg("info"):arg(path):stdout(Command.PIPED):stderr(Command.PIPED):output()
-			end)
-			if ok and output and output.status and output.status.success then
-				kind = core.disk_kind(output.stdout)
-			end
-			disks[#disks + 1] = { label = name, path = path, icon = cfg.disk_icons[kind] }
+			add(tostring(f.url))
+		end
+	end
+	-- Volumes mounted outside /Volumes — disk images attached at custom
+	-- mountpoints (e.g. a sparse bundle under ~/Projects) never show up
+	-- there, only in the mount table.
+	local mounts = run("mount")
+	if mounts then
+		for _, path in ipairs(core.parse_mounts(mounts)) do
+			add(path)
 		end
 	end
 	last_disks = disks
@@ -714,9 +788,15 @@ function M:entry(job)
 	if act == "refresh" then
 		refresh()
 	elseif act == "pin" then
-		pin() -- Task 6
+		pin()
 	elseif act then
-		nav(act)
+		-- job.args may not be a plain table (no table.unpack): collect the
+		-- trailing positionals by index.
+		local rest, i = {}, 2
+		while job.args[i] ~= nil do
+			rest[i - 1], i = job.args[i], i + 1
+		end
+		nav(act, rest)
 	end
 end
 
