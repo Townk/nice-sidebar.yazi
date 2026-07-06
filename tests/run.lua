@@ -54,9 +54,11 @@ end
 
 -- yazi API stubs: ya.sync just returns the function (bridges become plain
 -- calls; the tests only exercise M.core, which touches no yazi API).
-_G.ya = { sync = function(fn)
-	return fn
-end }
+_G.ya = {
+	sync = function(fn)
+		return fn
+	end,
+}
 
 local root = (arg and arg[0] or "tests/run.lua"):gsub("tests/run%.lua$", "")
 local M = dofile(root .. "main.lua")

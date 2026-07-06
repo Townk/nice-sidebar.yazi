@@ -214,8 +214,7 @@ local function merge_cfg(opts)
 			image = icons.image or DEFAULTS.disk_icons.image,
 			external = icons.external or DEFAULTS.disk_icons.external,
 		},
-		pins_file = opts.pins_file
-			or (os.getenv("XDG_STATE_HOME") or home .. "/.local/state") .. "/yazi/nice-sidebar/pins",
+		pins_file = opts.pins_file or (os.getenv("XDG_STATE_HOME") or home .. "/.local/state") .. "/yazi/nice-sidebar/pins",
 		colors = opts.colors or {},
 		dirs = {},
 	}
