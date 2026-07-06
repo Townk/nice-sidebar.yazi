@@ -190,33 +190,56 @@ State lives in the sync VM: `selected` (item index or `nil` — **`nil` at
 startup**), `focus` (`"list"` or `"sidebar"` — **`"list"` at startup**), the
 flattened selectable item list, pins, and the volume cache.
 
-Two invariants tie the model together:
+### Navigation mode (`follow`, default `false`)
 
-- **Selection = cd.** Every selection change immediately `ya.emit("cd", ...)`
-  to the item's path, from any trigger (keys, mouse, focus).
-- **A focused sidebar always has a selection.** Any action that gives the
-  sidebar focus while nothing is selected selects Home (the first item) — and
-  therefore cds there.
+`setup{ follow = ... }` picks how moving the sidebar selection relates to the
+file panes:
+
+- **`follow = false` — deferred (DEFAULT).** While the sidebar holds focus the
+  highlight is a *browse cursor*: moving it (`j`/`k`/arrows, `next`/`prev`)
+  changes only the highlighted row — the file panes stay put. `Enter`
+  **commits**: cd to the highlighted item and hand focus to the panes.
+  Blurring without committing (`l`/`Right`/`Shift+Right`/`L`) **cancels**:
+  focus returns to the panes and the highlight snaps back to the item matching
+  the current cwd. Focusing the sidebar never moves the panes. This is the
+  "jump to the sidebar, arrow around, press Enter to confirm and jump into the
+  panes" model.
+- **`follow = true` — live.** The panes track the highlight: every move cds,
+  focusing selects+cds Home when nothing is selected, and `Enter` re-anchors
+  and then jumps to the panes.
+
+Two invariants hold in both modes:
+
+- **A focused sidebar always has a selection.** Any action that focuses the
+  sidebar while nothing is selected highlights Home (the first item).
+- **The pill never lies about the panes when the list holds focus.** When
+  focus is on the file list, the highlight reflects the cwd (adopted on exact
+  match, cleared when the cwd leaves every item's umbrella). In `follow` mode
+  a highlight move also cds, so the two stay in lockstep; in deferred mode a
+  cancel restores the match.
 
 ### Commands
 
 - **`next` / `prev`** (bindings: `<S-j>`/`<S-Down>` and `<S-k>`/`<S-Up>`):
-  move the selection **globally** — they work from either focus side and do
-  not change focus. Movement walks selectable rows only (headers, rules,
-  blanks are skipped), clamped at both ends, crossing sections. When nothing
-  is selected, both commands select Home.
-- **`focus`** (binding: `<S-h>`/`<S-Left>`, global): give the sidebar focus.
-  No-op when the sidebar already holds it (this is the "Shift+H from the
-  sidebar is a no-op" rule).
+  step the selection through selectable rows only (headers, rules, blanks
+  skipped), clamped at both ends, crossing sections; Home when nothing is
+  selected. In deferred mode, from the list side they focus the sidebar and
+  move the highlight (enter browse mode, no cd); from the sidebar they move
+  the highlight. In `follow` mode they cd live from either side without
+  changing focus.
+- **`focus`** (binding: `<S-h>`/`<S-Left>`, global): give the sidebar focus
+  (deferred: no cd; `follow`: cd to Home if nothing selected). No-op when the
+  sidebar already holds it (the "Shift+H from the sidebar is a no-op" rule).
 - **`blur [cmd args…]`** (bindings: `<S-Right>`, `<S-l>`): sidebar focused →
-  return focus to the file list (selection untouched). List focused → run
-  the fallthrough command given as the remaining keymap args, or nothing.
-  The fallthrough lets a key keep its stock behavior on the list side — e.g.
-  `plugin nice-sidebar blur plugin bypass` preserves `L`'s bypass binding.
-- **`enter [cmd args…]`** (binding: `<Enter>`): sidebar focused → swallow
-  the key; focus stays on the sidebar and the file column re-anchors to the
-  highlighted item (list navigation never runs underneath the sidebar).
-  List focused → the fallthrough (the consumer's stock Enter behavior).
+  cancel: focus the file list; in deferred mode the highlight snaps back to
+  the cwd item. List focused → run the fallthrough command given as the
+  remaining keymap args, or nothing. The fallthrough lets a key keep its
+  stock behavior on the list side — e.g. `plugin nice-sidebar blur plugin
+  bypass` preserves `L`'s bypass binding.
+- **`enter [cmd args…]`** (binding: `<Enter>`): sidebar focused → **commit**:
+  cd to the highlighted item and jump focus to the file panes (list
+  navigation never runs underneath the sidebar). List focused → the
+  fallthrough (the consumer's stock Enter behavior).
 - **`guard [cmd args…]`**: the generic form of the same rule — a no-op
   while the sidebar holds focus, the fallthrough otherwise. Wrap any other
   list-navigation key with it (e.g. `G` → `plugin nice-sidebar guard arrow
@@ -279,6 +302,8 @@ require("nice-sidebar"):setup {
   title = "Yazi File Manager",   -- header text
   title_icon = "󰇥",
   width = 26,                    -- sidebar column width (cells)
+  follow = false,                -- false (default): browse then Enter to commit;
+                                 -- true: panes track the highlight live
   dirs = { ... },                -- see §Core directories (replaces defaults)
   show_disks = true,
   disk_icons = { internal = "󰋊", image = "", external = "󱊞" },

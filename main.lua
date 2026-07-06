@@ -253,6 +253,11 @@ local function merge_cfg(opts)
 		title_icon = opts.title_icon or DEFAULTS.title_icon,
 		width = opts.width or DEFAULTS.width,
 		show_disks = opts.show_disks ~= false,
+		-- follow = false (default): moving the sidebar highlight while it holds
+		-- focus does NOT change the file panes — it is a browse cursor, and
+		-- Enter commits (cd + jump to the panes). follow = true: the panes
+		-- track the highlight live (cd on every move).
+		follow = opts.follow == true,
 		disk_icons = {
 			internal = icons.internal or DEFAULTS.disk_icons.internal,
 			image = icons.image or DEFAULTS.disk_icons.image,
@@ -342,8 +347,8 @@ local function swap_cursor(on)
 end
 
 -- ------------------------------------------------------- selection/focus --
--- Invariant #1: selection = cd. Selecting always navigates, even when the
--- index is unchanged (clicking Documents while deep inside it returns you
+-- select_item: commit — move the highlight AND cd to it. Navigates even when
+-- the index is unchanged (clicking Documents while deep inside it returns you
 -- to ~/Documents, like Finder).
 local function select_item(i)
 	local it = S.items[i]
@@ -355,27 +360,63 @@ local function select_item(i)
 	ui.render()
 end
 
--- Invariant #2: a focused sidebar always has a selection — focusing with
--- nothing selected selects Home (and therefore cds there).
+-- highlight: move the browse cursor WITHOUT touching the file panes. The
+-- deferred half of the `follow = false` model.
+local function highlight(i)
+	if not S.items[i] then
+		return
+	end
+	S.selected = i
+	ui.render()
+end
+
+-- move: step the sidebar selection by `delta`. In follow mode every step
+-- cds live; otherwise it just moves the highlight (Enter commits later).
+local function move(delta)
+	local i = core.step(S.selected, delta, #S.items)
+	if S.cfg.follow then
+		select_item(i)
+	else
+		highlight(i)
+	end
+end
+
+-- Invariant: a focused sidebar always has a selection. Focusing with nothing
+-- highlighted picks Home. In follow mode that also cds (live); in the default
+-- deferred mode focusing never moves the panes.
 local function focus_sidebar()
 	if S.focus == "sidebar" or #S.items == 0 then
 		return
 	end
 	S.focus = "sidebar"
 	swap_cursor(true)
-	if S.selected then
-		ui.render()
+	if S.cfg.follow then
+		if S.selected then
+			ui.render()
+		else
+			select_item(1)
+		end
 	else
-		select_item(1)
+		if not S.selected then
+			S.selected = 1
+		end
+		ui.render()
 	end
 end
 
+-- Blurring cancels an un-committed browse: the highlight snaps back to the
+-- item matching the current cwd (or clears) so the pill never lies about
+-- where the panes are. In follow mode the highlight already equals the cwd
+-- item, so this is a no-op there.
 local function blur_sidebar()
 	if S.focus ~= "sidebar" then
 		return
 	end
 	S.focus = "list"
 	swap_cursor(false)
+	if not S.cfg.follow then
+		S.selected = core.track(S.items, nil, tostring(cx.active.current.cwd))
+	end
 	ui.render()
 end
 
@@ -410,8 +451,14 @@ local nav = ya.sync(function(_, act, rest)
 		return
 	end
 	if act == "next" or act == "prev" then
-		-- Global: works from either focus side, does not change focus.
-		select_item(core.step(S.selected, act == "next" and 1 or -1, #S.items))
+		-- Step the selection. In the default deferred mode this enters browse
+		-- mode (focuses the sidebar) and moves the highlight without cd'ing;
+		-- in follow mode it cds live from either side without changing focus.
+		local delta = act == "next" and 1 or -1
+		if not S.cfg.follow and S.focus ~= "sidebar" then
+			focus_sidebar()
+		end
+		move(delta)
 	elseif act == "focus" then
 		focus_sidebar()
 	elseif act == "blur" then
@@ -425,11 +472,13 @@ local nav = ya.sync(function(_, act, rest)
 			ya.emit(rest[1], { table.unpack(rest, 2) })
 		end
 	elseif act == "enter" then
-		-- Sidebar focused: swallow the key — focus stays here and the file
-		-- column re-anchors to the highlighted item (list navigation must
-		-- not run underneath the sidebar). List focused: fallthrough.
+		-- Sidebar focused: CONFIRM the highlighted item — cd to it and jump
+		-- focus to the file panes (never runs list navigation underneath the
+		-- sidebar). This is the commit step of the deferred model, and in
+		-- follow mode it just re-anchors + jumps. List focused: fallthrough.
 		if S.focus == "sidebar" then
 			select_item(S.selected)
+			blur_sidebar()
 		elseif rest and rest[1] then
 			ya.emit(rest[1], { table.unpack(rest, 2) })
 		end
@@ -461,10 +510,11 @@ local nav = ya.sync(function(_, act, rest)
 			ya.emit("enter", {})
 		end
 	elseif act == "j" or act == "k" then
-		-- Focus-scoped: sidebar selection when the sidebar owns focus,
-		-- stock cursor movement otherwise.
+		-- Focus-scoped: move the sidebar selection (deferred or live per
+		-- `follow`) when the sidebar owns focus, stock cursor movement
+		-- otherwise.
 		if S.focus == "sidebar" then
-			select_item(core.step(S.selected, act == "j" and 1 or -1, #S.items))
+			move(act == "j" and 1 or -1)
 		else
 			ya.emit("arrow", { act == "j" and 1 or -1 })
 		end
@@ -643,7 +693,14 @@ function M:setup(opts)
 			if row and row.type == "item" then
 				select_item(row.index)
 			elseif not S.selected then
-				select_item(1)
+				-- Empty-area click, nothing highlighted: pick Home, but cd only
+				-- in follow mode so a stray click never moves the panes in the
+				-- default deferred mode.
+				if S.cfg.follow then
+					select_item(1)
+				else
+					highlight(1)
+				end
 			else
 				ui.render()
 			end

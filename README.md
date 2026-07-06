@@ -94,32 +94,47 @@ prepend_keymap = [
 
 ## Interaction model
 
-Two invariants drive everything:
+By default the sidebar is a **picker you browse, then confirm** — moving the
+highlight while the sidebar is focused does *not* touch the file panes; you
+press `Enter` to commit and jump into the panes. Set `follow = true` to make
+the panes track the highlight live instead (see [Navigation mode](#navigation-mode)).
 
-1. **Selection is navigation.** Changing the sidebar selection — keys,
-   mouse, focus — immediately cds to that item. Clicking an item you are
-   already inside returns you to its root, like Finder.
-2. **A focused sidebar always has a selection.** Focusing it with nothing
-   selected selects Home (and cds there). When the selection clears (you
-   navigated out of its subtree), a focused sidebar hands focus back to
-   the file list.
+Two invariants hold in both modes:
+
+1. **A focused sidebar always has a selection.** Focusing it with nothing
+   selected highlights Home.
+2. **When the file list has focus, the highlight reflects the cwd** — it
+   adopts an item when you cd exactly onto its path, and clears when the cwd
+   leaves every item's subtree.
+
+The table below is the default (deferred) mode:
 
 | Key | File list focused | Sidebar focused |
 | --- | --- | --- |
-| `J` / `Shift+Down` | select next sidebar item | select next sidebar item |
-| `K` / `Shift+Up` | select previous sidebar item | select previous sidebar item |
+| `J` / `Shift+Down` | focus sidebar + highlight next | highlight next (no cd) |
+| `K` / `Shift+Up` | focus sidebar + highlight previous | highlight previous (no cd) |
 | `H` / `Shift+Left` | focus the sidebar | nothing |
 | `h` / `Left` | leave; at `/`, focus the sidebar | nothing |
-| `l` / `Right` | enter | focus the file list |
-| `L` / `Shift+Right` | fallthrough (see below) | focus the file list |
-| `Enter` | fallthrough (open / smart-enter) | re-anchor the file column, focus stays |
+| `l` / `Right` | enter | cancel: focus panes, highlight reverts to cwd |
+| `L` / `Shift+Right` | fallthrough (see below) | cancel: focus panes |
+| `Enter` | fallthrough (open / smart-enter) | **commit**: cd + jump to panes |
 | `G`, `g g`, … | fallthrough (list navigation) | nothing (suppressed) |
-| `j` / `Down` | cursor down | select next sidebar item |
-| `k` / `Up` | cursor up | select previous sidebar item |
+| `j` / `Down` | cursor down | highlight next (no cd) |
+| `k` / `Up` | cursor up | highlight previous (no cd) |
 | `b p` | pin/unpin the hovered directory | pin/unpin the selected sidebar item |
 
-Mouse: clicking an item selects it (and cds); clicking empty sidebar space
-focuses the sidebar, selecting Home if nothing was selected.
+With `follow = true`, every "highlight" cell above cds live instead, `Enter`
+just re-anchors and jumps, and `J`/`K` don't change focus.
+
+Mouse: clicking an item commits it (cd); clicking empty sidebar space focuses
+the sidebar and highlights Home (cd only in `follow` mode).
+
+### Navigation mode
+
+`follow = false` (the default) gives the deferred picker above: browse the
+sidebar without disturbing the panes, `Enter` to confirm, `l`/`Shift+Right`
+to cancel. `follow = true` restores live navigation — the panes cd on every
+highlight move.
 
 While the sidebar holds focus it owns the keyboard: list-navigation keys
 (`Enter`, `G`, `g g`, and any others you wrap) are suppressed so navigation
@@ -161,6 +176,8 @@ require("nice-sidebar"):setup({
 	title = "Yazi File Manager",
 	title_icon = "󰇥",
 	width = 26, -- sidebar width in cells
+	follow = false, -- false: browse, then Enter to commit (default)
+	--              -- true:  panes follow the highlight live
 	dirs = { -- replaces the whole list; order is display order
 		{ label = "Home", path = "~", icon = "󰠦" },
 		{ label = "Desktop", path = "~/Desktop", icon = "󰇄" },
