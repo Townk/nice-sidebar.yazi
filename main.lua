@@ -377,6 +377,52 @@ local nav = ya.sync(function(_, act)
 	end
 end)
 
+local get_cfg = ya.sync(function()
+	if not S.cfg then
+		return nil
+	end
+	return {
+		dirs = S.cfg.dirs,
+		pins_file = S.cfg.pins_file,
+		show_disks = S.cfg.show_disks,
+		disk_icons = S.cfg.disk_icons,
+		home = S.cfg.home,
+	}
+end)
+
+-- The pin toggle target: the hovered directory, else the cwd.
+local pin_target = ya.sync(function()
+	local h = cx.active.current.hovered
+	if h and h.cha.is_dir then
+		return tostring(h.url)
+	end
+	return tostring(cx.active.current.cwd)
+end)
+
+-- Swap in freshly scanned sections, remapping the selection by path (the
+-- item indexes shift when sections grow or shrink).
+local publish = ya.sync(function(_, sections)
+	if not S.cfg then
+		return
+	end
+	local prev = S.selected and S.items[S.selected] and S.items[S.selected].path or nil
+	S.rows, S.items = core.build(sections)
+	S.selected = nil
+	if prev then
+		for i, it in ipairs(S.items) do
+			if it.path == prev then
+				S.selected = i
+				break
+			end
+		end
+	end
+	if not S.selected and S.focus == "sidebar" then
+		S.focus = "list"
+		swap_cursor(false)
+	end
+	ui.render()
+end)
+
 -- ----------------------------------------------------------------- setup --
 function M:setup(opts)
 	S.cfg = merge_cfg(opts)
@@ -507,9 +553,109 @@ function M:setup(opts)
 	ya.emit("plugin", { "nice-sidebar", "refresh" })
 end
 
--- Placeholder async commands; Task 6 provides the real implementations.
-local function refresh() end
-local function pin() end
+-- ------------------------------------------------------------ async work --
+-- Everything below runs in the async context only: stats, dir listings,
+-- process spawns, and file writes never touch the render path.
+local function read_lines(path)
+	local lines = {}
+	local f = io.open(path, "r")
+	if f then
+		for line in f:lines() do
+			lines[#lines + 1] = line
+		end
+		f:close()
+	end
+	return lines
+end
+
+local function write_lines(path, lines)
+	local dir = path:match("^(.*)/[^/]+$")
+	if dir then
+		fs.create("dir_all", Url(dir))
+	end
+	local tmp = path .. ".tmp"
+	local f = io.open(tmp, "w")
+	if not f then
+		return false
+	end
+	f:write(table.concat(lines, "\n"))
+	if #lines > 0 then
+		f:write("\n")
+	end
+	f:close()
+	return os.rename(tmp, path) ~= nil
+end
+
+-- The last successful scan, kept across entry calls (async-VM local): a
+-- failed /Volumes read keeps showing it instead of blanking the section.
+local last_disks = {}
+
+local function scan_disks(cfg)
+	local disks = {}
+	local files = fs.read_dir(Url("/Volumes"), {})
+	if not files then
+		return last_disks
+	end
+	for _, f in ipairs(files) do
+		if f.cha and f.cha.is_dir then
+			local path = tostring(f.url)
+			local name = path:match("([^/]+)$") or path
+			local kind = "external"
+			-- output() waits; spawn() must NOT be used here — the discarded
+			-- Child handle is killed on GC, racing the process to death.
+			local ok, output = pcall(function()
+				return Command("diskutil"):arg("info"):arg(path):stdout(Command.PIPED):stderr(Command.PIPED):output()
+			end)
+			if ok and output and output.status and output.status.success then
+				kind = core.disk_kind(output.stdout)
+			end
+			disks[#disks + 1] = { label = name, path = path, icon = cfg.disk_icons[kind] }
+		end
+	end
+	last_disks = disks
+	return disks
+end
+
+local function refresh()
+	local cfg = get_cfg()
+	if not cfg then
+		return
+	end
+	local sections = { dirs = {}, pins = {}, disks = {} }
+	for _, d in ipairs(cfg.dirs) do
+		local cha = fs.cha(Url(d.path))
+		if cha and cha.is_dir then
+			sections.dirs[#sections.dirs + 1] = d
+		end
+	end
+	for _, line in ipairs(read_lines(cfg.pins_file)) do
+		if line:sub(1, 1) == "/" then
+			-- Dead pins are hidden but stay in the file (a pin to an
+			-- unmounted volume survives the unmount).
+			local cha = fs.cha(Url(line))
+			if cha and cha.is_dir then
+				sections.pins[#sections.pins + 1] = { label = core.abbrev(line, cfg.home), path = line, icon = PIN_ICON }
+			end
+		end
+	end
+	if cfg.show_disks and ya.target_os() == "macos" then
+		sections.disks = scan_disks(cfg)
+	end
+	publish(sections)
+end
+
+local function pin()
+	local cfg = get_cfg()
+	if not cfg then
+		return
+	end
+	local lines = core.toggle(read_lines(cfg.pins_file), pin_target())
+	if not write_lines(cfg.pins_file, lines) then
+		ya.notify({ title = "nice-sidebar", content = "Cannot write the pins file", level = "warn", timeout = 5 })
+		return
+	end
+	refresh()
+end
 
 -- ----------------------------------------------------------------- entry --
 -- Runs in the async context. Keymap args are POSITIONAL
