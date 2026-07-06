@@ -1,0 +1,47 @@
+-- Pure-core tests for nice-sidebar.yazi. Loaded by tests/run.lua, which
+-- provides the globals t(name, fn), eq(got, want), and core (= M.core).
+
+-- expand -------------------------------------------------------------------
+t("expand: bare tilde is home", function()
+	eq(core.expand("~", "/Users/u"), "/Users/u")
+end)
+t("expand: tilde-slash prefixes home", function()
+	eq(core.expand("~/Desktop", "/Users/u"), "/Users/u/Desktop")
+end)
+t("expand: absolute paths pass through", function()
+	eq(core.expand("/Volumes/X", "/Users/u"), "/Volumes/X")
+end)
+t("expand: tilde in the middle is not expanded", function()
+	eq(core.expand("/a/~/b", "/Users/u"), "/a/~/b")
+end)
+
+-- abbrev -------------------------------------------------------------------
+t("abbrev: home becomes tilde", function()
+	eq(core.abbrev("/Users/u", "/Users/u"), "~")
+end)
+t("abbrev: home prefix becomes tilde-slash", function()
+	eq(core.abbrev("/Users/u/Projects/x", "/Users/u"), "~/Projects/x")
+end)
+t("abbrev: sibling of home is untouched", function()
+	eq(core.abbrev("/Users/uu/x", "/Users/u"), "/Users/uu/x")
+end)
+t("abbrev: outside home is untouched", function()
+	eq(core.abbrev("/Volumes/X", "/Users/u"), "/Volumes/X")
+end)
+
+-- truncate -----------------------------------------------------------------
+t("truncate: short strings pass through", function()
+	eq(core.truncate("abc", 5), "abc")
+end)
+t("truncate: exact fit passes through", function()
+	eq(core.truncate("abcde", 5), "abcde")
+end)
+t("truncate: long strings clip with ellipsis", function()
+	eq(core.truncate("abcdef", 5), "abcd…")
+end)
+t("truncate: multibyte characters count as one", function()
+	eq(core.truncate("ábçdéf", 5), "ábçd…")
+end)
+t("truncate: max of one is just the ellipsis", function()
+	eq(core.truncate("abc", 1), "…")
+end)

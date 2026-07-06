@@ -1,0 +1,5 @@
+{
+  "$schema": "https://raw.githubusercontent.com/LuaLS/vscode-lua/master/setting/schema.json",
+  "runtime.version": "Lua 5.4",
+  "diagnostics.globals": ["ya", "cx", "rt", "ui", "ps", "fs", "th", "Command", "Url", "Parent", "Tab", "Header", "Status"]
+}
