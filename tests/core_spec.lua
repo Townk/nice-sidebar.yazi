@@ -246,3 +246,11 @@ end)
 t("parse_mounts: empty input yields nothing", function()
 	eq(core.parse_mounts(""), {})
 end)
+t("parse_mounts: Data-firmlink mountpoints fold back onto the visible namespace", function()
+	local text = table.concat({
+		"/dev/disk5s1 on /System/Volumes/Data/Users/u/Projects/work (apfs, local, journaled, mounted by u)",
+		"/dev/disk3s5 on /System/Volumes/Data (apfs, local, journaled, nobrowse, protect)",
+		"/dev/disk6s1 on /Users/u/Projects/work (apfs, local, journaled, mounted by u)",
+	}, "\n")
+	eq(core.parse_mounts(text), { "/Users/u/Projects/work" })
+end)

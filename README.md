@@ -81,6 +81,9 @@ prepend_keymap = [
   { on = "<Left>",     run = "plugin nice-sidebar h",     desc = "Leave; focus the sidebar at the root" },
   { on = "l",          run = "plugin nice-sidebar l",     desc = "Enter; leave the sidebar" },
   { on = "<Right>",    run = "plugin nice-sidebar l",     desc = "Enter; leave the sidebar" },
+  { on = "<Enter>",    run = "plugin nice-sidebar enter plugin bypass smart-enter", desc = "Open / re-anchor" },
+  { on = "G",          run = "plugin nice-sidebar guard arrow bot", desc = "Bottom (list only)" },
+  { on = [ "g", "g" ], run = "plugin nice-sidebar guard arrow top", desc = "Top (list only)" },
   { on = "j",          run = "plugin nice-sidebar j",     desc = "Down (list) / next (sidebar)" },
   { on = "<Down>",     run = "plugin nice-sidebar j",     desc = "Down (list) / next (sidebar)" },
   { on = "k",          run = "plugin nice-sidebar k",     desc = "Up (list) / previous (sidebar)" },
@@ -109,12 +112,21 @@ Two invariants drive everything:
 | `h` / `Left` | leave; at `/`, focus the sidebar | nothing |
 | `l` / `Right` | enter | focus the file list |
 | `L` / `Shift+Right` | fallthrough (see below) | focus the file list |
+| `Enter` | fallthrough (open / smart-enter) | re-anchor the file column, focus stays |
+| `G`, `g g`, … | fallthrough (list navigation) | nothing (suppressed) |
 | `j` / `Down` | cursor down | select next sidebar item |
 | `k` / `Up` | cursor up | select previous sidebar item |
-| `b p` | pin/unpin the hovered directory | — |
+| `b p` | pin/unpin the hovered directory | pin/unpin the selected sidebar item |
 
 Mouse: clicking an item selects it (and cds); clicking empty sidebar space
 focuses the sidebar, selecting Home if nothing was selected.
+
+While the sidebar holds focus it owns the keyboard: list-navigation keys
+(`Enter`, `G`, `g g`, and any others you wrap) are suppressed so navigation
+never runs in the file column underneath you. Wrap those keys with the
+`guard` command (or `enter` for `Enter`) — see below. `b p` retargets too:
+with the sidebar focused it toggles the pin for the **selected** item, so
+you can unpin the row you are looking at.
 
 The selected row draws as the same rounded pill yazi uses for its file
 cursor (the caps come from your theme's `th.indicator.padding`), inset one
@@ -122,10 +134,17 @@ cell from the column edges. Without configured selection colors, the
 list-focused fallback is plain bold text — no pill, since there is no
 background color to shape the caps with.
 
-`blur` accepts a fallthrough: any keymap args after it run as a command when
-the file list already holds focus. If you bind `L` and use a plugin there
-(e.g. [bypass](https://github.com/Rolv-Apneseth/bypass)), keep its behavior
-with `run = "plugin nice-sidebar blur plugin bypass"`.
+`blur`, `enter`, and `guard` all accept a **fallthrough**: any keymap args
+after the command run as a yazi command when the file list holds focus, and
+are suppressed when the sidebar holds focus. This is how a key keeps its
+stock behavior on the list side while staying inert over the sidebar:
+
+- `blur plugin bypass` — `L` bypasses on the list, blurs on the sidebar.
+- `enter plugin bypass smart-enter` — `Enter` opens/smart-enters on the
+  list; on the sidebar it re-anchors the file column and keeps focus.
+- `guard arrow bot` — `G` jumps to the bottom on the list; nothing on the
+  sidebar. Wrap any other navigation key the same way (`guard arrow top`
+  for `g g`, etc.).
 
 `plugin nice-sidebar refresh` manually rescans mounted volumes (rescans also
 happen on navigation, throttled, and on mount events when yazi publishes

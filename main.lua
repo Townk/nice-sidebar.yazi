@@ -184,9 +184,14 @@ end
 -- (listed directly) are excluded. The trailing "(options)" group is
 -- anchored at end-of-line so mountpoints containing " (" survive.
 function core.parse_mounts(text)
-	local out = {}
+	local out, seen = {}, {}
 	for line in text:gmatch("[^\n]+") do
 		local path = line:match("^/dev/%S+ on (.+) %([^()]*%)%s*$")
+		if path then
+			-- macOS sometimes records custom mountpoints under the Data
+			-- volume firmlink; fold them back onto the visible namespace.
+			path = path:gsub("^/System/Volumes/Data/", "/")
+		end
 		if
 			path
 			and path ~= "/"
@@ -194,7 +199,9 @@ function core.parse_mounts(text)
 			and not path:match("^/private/")
 			and not path:match("^/Library/")
 			and not path:match("^/Volumes/")
+			and not seen[path]
 		then
+			seen[path] = true
 			out[#out + 1] = path
 		end
 	end
@@ -417,6 +424,22 @@ local nav = ya.sync(function(_, act, rest)
 		elseif rest and rest[1] then
 			ya.emit(rest[1], { table.unpack(rest, 2) })
 		end
+	elseif act == "enter" then
+		-- Sidebar focused: swallow the key — focus stays here and the file
+		-- column re-anchors to the highlighted item (list navigation must
+		-- not run underneath the sidebar). List focused: fallthrough.
+		if S.focus == "sidebar" then
+			select_item(S.selected)
+		elseif rest and rest[1] then
+			ya.emit(rest[1], { table.unpack(rest, 2) })
+		end
+	elseif act == "guard" then
+		-- Generic list-navigation suppressor: swallow the key while the
+		-- sidebar holds focus, run the fallthrough otherwise (e.g.
+		-- "plugin nice-sidebar guard arrow bot" wraps G).
+		if S.focus ~= "sidebar" and rest and rest[1] then
+			ya.emit(rest[1], { table.unpack(rest, 2) })
+		end
 	elseif act == "h" then
 		-- Sidebar focused: h/Left do nothing. List focused: leave, except
 		-- at the filesystem root, where one more "left" focuses the
@@ -461,8 +484,14 @@ local get_cfg = ya.sync(function()
 	}
 end)
 
--- The pin toggle target: the hovered directory, else the cwd.
+-- The pin toggle target: the highlighted sidebar item while the sidebar
+-- holds focus (so `b p` on a selected pin unpins it instead of pinning
+-- whatever the file list hovers underneath), else the hovered directory,
+-- else the cwd.
 local pin_target = ya.sync(function()
+	if S.focus == "sidebar" and S.selected and S.items[S.selected] then
+		return S.items[S.selected].path
+	end
 	local h = cx.active.current.hovered
 	if h and h.cha.is_dir then
 		return tostring(h.url)

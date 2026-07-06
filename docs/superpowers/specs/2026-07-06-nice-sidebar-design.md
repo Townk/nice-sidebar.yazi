@@ -213,6 +213,17 @@ Two invariants tie the model together:
   the fallthrough command given as the remaining keymap args, or nothing.
   The fallthrough lets a key keep its stock behavior on the list side — e.g.
   `plugin nice-sidebar blur plugin bypass` preserves `L`'s bypass binding.
+- **`enter [cmd args…]`** (binding: `<Enter>`): sidebar focused → swallow
+  the key; focus stays on the sidebar and the file column re-anchors to the
+  highlighted item (list navigation never runs underneath the sidebar).
+  List focused → the fallthrough (the consumer's stock Enter behavior).
+- **`guard [cmd args…]`**: the generic form of the same rule — a no-op
+  while the sidebar holds focus, the fallthrough otherwise. Wrap any other
+  list-navigation key with it (e.g. `G` → `plugin nice-sidebar guard arrow
+  bot`, `g g` → `… guard arrow top`).
+- **Pin targeting under sidebar focus:** while the sidebar holds focus,
+  `pin` toggles the **highlighted sidebar item's** path (so `b p` on a
+  selected pin unpins it), not the file list's hovered entry.
 - **`h`** (bindings: `h`, `<Left>`): focus-scoped dispatch —
   sidebar focused → **no-op**; list focused at the filesystem root (the tab
   has no parent folder) → focus the sidebar; otherwise → `leave` (stock
