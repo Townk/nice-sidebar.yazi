@@ -113,6 +113,10 @@ Two invariants drive everything:
 Mouse: clicking an item selects it (and cds); clicking empty sidebar space
 focuses the sidebar, selecting Home if nothing was selected.
 
+`plugin nice-sidebar refresh` manually rescans mounted volumes (rescans also
+happen on navigation, throttled, and on mount events when yazi publishes
+them).
+
 ## Configuration
 
 Everything is optional; the defaults are shown.

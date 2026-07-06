@@ -228,7 +228,9 @@ end
 local function style(color, bold)
 	local s = ui.Style()
 	if color then
-		s = s:fg(color)
+		pcall(function()
+			s = s:fg(color)
+		end)
 	end
 	if bold then
 		s = s:bold()
@@ -240,10 +242,19 @@ end
 -- else reversed (focused) / bold (unfocused) as portable defaults.
 local function sel_style(focused)
 	local c = S.cfg.colors
-	local bg = focused and c.selected_bg or c.selected_inactive_bg
-	local fg = focused and c.selected_fg or c.selected_inactive_fg
+	local bg, fg
+	if focused then
+		bg, fg = c.selected_bg, c.selected_fg
+	else
+		bg, fg = c.selected_inactive_bg, c.selected_inactive_fg
+	end
 	if bg and fg then
-		return ui.Style():fg(fg):bg(bg):bold()
+		local ok, s = pcall(function()
+			return ui.Style():fg(fg):bg(bg):bold()
+		end)
+		if ok then
+			return s
+		end
 	end
 	if focused then
 		local ok, s = pcall(function()
@@ -265,8 +276,13 @@ local function swap_cursor(on)
 		return
 	end
 	if on then
-		S.indicator = S.indicator or th.indicator.current
-		th.indicator.current = ui.Style():fg(c.cursor_fg):bg(c.cursor_bg):bold()
+		local ok, s = pcall(function()
+			return ui.Style():fg(c.cursor_fg):bg(c.cursor_bg):bold()
+		end)
+		if ok then
+			S.indicator = S.indicator or th.indicator.current
+			th.indicator.current = s
+		end
 	elseif S.indicator then
 		th.indicator.current = S.indicator
 	end
@@ -475,7 +491,7 @@ function M:setup(opts)
 			for i = first, last do
 				local row = S.rows[i]
 				local ln
-				if clipped and ((i == first and first > 1) or (i == last and last < #S.rows)) then
+				if clipped and i ~= sel_row and ((i == first and first > 1) or (i == last and last < #S.rows)) then
 					ln = ui.Line({ ui.Span(" ⋮"):style(style(c.separator or "darkgray")) })
 					row = { type = "blank" } -- the marker row is not clickable
 				elseif row.type == "title" then
@@ -498,7 +514,7 @@ function M:setup(opts)
 						ln:truncate({ max = w })
 					else
 						ln = ui.Line({ ui.Span(text):style(style(c.item)) })
-						ln:truncate({ max = w - 1 }) -- 1 cell of trailing padding
+						ln:truncate({ max = math.max(1, w - 1) }) -- 1 cell of trailing padding
 					end
 				else -- blank
 					ln = ui.Line({})
@@ -648,7 +664,12 @@ local function pin()
 	if not cfg then
 		return
 	end
-	local lines = core.toggle(read_lines(cfg.pins_file), pin_target())
+	local target = pin_target()
+	if target:sub(1, 1) ~= "/" then
+		ya.notify({ title = "nice-sidebar", content = "Only real directories can be pinned", level = "warn", timeout = 5 })
+		return
+	end
+	local lines = core.toggle(read_lines(cfg.pins_file), target)
 	if not write_lines(cfg.pins_file, lines) then
 		ya.notify({ title = "nice-sidebar", content = "Cannot write the pins file", level = "warn", timeout = 5 })
 		return

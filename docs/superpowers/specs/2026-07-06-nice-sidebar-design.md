@@ -271,7 +271,7 @@ narrow).
 - Pins file unreadable → treated as empty; unwritable → pin toggle is a no-op
   (`ya.notify` a warning).
 - Volume scan / `diskutil` failure → keep the previous volume list; icon
-  classification failure → `internal` icon.
+  classification failure → `external` icon.
 - Missing configured dirs → hidden.
 - All overrides installed via `pcall`; a failure degrades to stock yazi rather
   than breaking the app.

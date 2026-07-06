@@ -142,11 +142,14 @@ t("build: dirs only — title block, no sections", function()
 end)
 t("build: empty pins hide the whole Pinned section", function()
 	local rows = core.build({ dirs = dirs, pins = {}, disks = { { label = "X", path = "/Volumes/X", icon = "x" } } })
+	local headers = 0
 	for _, row in ipairs(rows) do
 		if row.type == "header" then
+			headers = headers + 1
 			eq(row.text, "Disks")
 		end
 	end
+	eq(headers, 1)
 end)
 t("build: sections carry header, inset rule, and items in order", function()
 	local rows, its = core.build({
@@ -165,6 +168,22 @@ t("build: sections carry header, inset rule, and items in order", function()
 	eq(rows[13], { type = "item", index = 4 })
 	eq(its[3].path, "/u/p")
 	eq(its[4].path, "/Volumes/X")
+end)
+t("build: empty dirs still render the title block and sections", function()
+	local rows, its = core.build({
+		dirs = {},
+		pins = { { label = "~/p", path = "/u/p", icon = "p" } },
+		disks = {},
+	})
+	eq(#its, 1)
+	eq(rows[1], { type = "title" })
+	eq(rows[2], { type = "rule" })
+	eq(rows[3], { type = "blank" })
+	eq(rows[4], { type = "blank" })
+	eq(rows[5], { type = "header", text = "Pinned", icon = "󰐃" })
+	eq(rows[6], { type = "rule", inset = true })
+	eq(rows[7], { type = "item", index = 1 })
+	eq(#rows, 7)
 end)
 
 -- toggle -------------------------------------------------------------------
