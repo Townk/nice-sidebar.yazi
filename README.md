@@ -94,10 +94,12 @@ prepend_keymap = [
 
 ## Interaction model
 
-By default the sidebar is a **picker you browse, then confirm** — moving the
-highlight while the sidebar is focused does *not* touch the file panes; you
-press `Enter` to commit and jump into the panes. Set `follow = true` to make
-the panes track the highlight live instead (see [Navigation mode](#navigation-mode)).
+By default the sidebar is a **picker you browse, then confirm** — once the
+sidebar is focused, moving the highlight does *not* touch the file panes; you
+press `Enter` to commit and jump into the panes. From the main pane,
+`Shift+Up`/`Shift+Down` still jump directly (cd immediately, focus stays on the
+panes). Set `follow = true` to make the panes track the highlight live in the
+sidebar too (see [Navigation mode](#navigation-mode)).
 
 Two invariants hold in both modes:
 
@@ -111,8 +113,8 @@ The table below is the default (deferred) mode:
 
 | Key | File list focused | Sidebar focused |
 | --- | --- | --- |
-| `J` / `Shift+Down` | focus sidebar + highlight next | highlight next (no cd) |
-| `K` / `Shift+Up` | focus sidebar + highlight previous | highlight previous (no cd) |
+| `J` / `Shift+Down` | select next + cd (focus stays on panes) | highlight next (no cd) |
+| `K` / `Shift+Up` | select previous + cd (focus stays on panes) | highlight previous (no cd) |
 | `H` / `Shift+Left` | focus the sidebar | nothing |
 | `h` / `Left` | leave; at `/`, focus the sidebar | nothing |
 | `l` / `Right` | enter | cancel: focus panes, highlight reverts to cwd |

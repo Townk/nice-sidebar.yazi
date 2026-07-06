@@ -451,14 +451,16 @@ local nav = ya.sync(function(_, act, rest)
 		return
 	end
 	if act == "next" or act == "prev" then
-		-- Step the selection. In the default deferred mode this enters browse
-		-- mode (focuses the sidebar) and moves the highlight without cd'ing;
-		-- in follow mode it cds live from either side without changing focus.
+		-- Focus-scoped. From the file list: cd immediately to the next/prev
+		-- sidebar item WITHOUT stealing focus — the panes change under you,
+		-- the classic global jump. From the sidebar: move the highlight,
+		-- deferred (Enter commits) or live per `follow`.
 		local delta = act == "next" and 1 or -1
-		if not S.cfg.follow and S.focus ~= "sidebar" then
-			focus_sidebar()
+		if S.focus == "sidebar" then
+			move(delta)
+		else
+			select_item(core.step(S.selected, delta, #S.items))
 		end
-		move(delta)
 	elseif act == "focus" then
 		focus_sidebar()
 	elseif act == "blur" then

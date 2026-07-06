@@ -195,10 +195,12 @@ flattened selectable item list, pins, and the volume cache.
 `setup{ follow = ... }` picks how moving the sidebar selection relates to the
 file panes:
 
-- **`follow = false` — deferred (DEFAULT).** While the sidebar holds focus the
-  highlight is a *browse cursor*: moving it (`j`/`k`/arrows, `next`/`prev`)
-  changes only the highlighted row — the file panes stay put. `Enter`
-  **commits**: cd to the highlighted item and hand focus to the panes.
+- **`follow = false` — deferred (DEFAULT).** The deferred rule applies only
+  while the sidebar **already holds focus** — there the highlight is a *browse
+  cursor*: moving it (`j`/`k`/arrows, `next`/`prev`) changes only the
+  highlighted row, the file panes stay put, and `Enter` **commits** (cd +
+  hand focus to the panes). From the file list, `next`/`prev` still cd
+  immediately (below).
   Blurring without committing (`l`/`Right`/`Shift+Right`/`L`) **cancels**:
   focus returns to the panes and the highlight snaps back to the item matching
   the current cwd. Focusing the sidebar never moves the panes. This is the
@@ -223,10 +225,11 @@ Two invariants hold in both modes:
 - **`next` / `prev`** (bindings: `<S-j>`/`<S-Down>` and `<S-k>`/`<S-Up>`):
   step the selection through selectable rows only (headers, rules, blanks
   skipped), clamped at both ends, crossing sections; Home when nothing is
-  selected. In deferred mode, from the list side they focus the sidebar and
-  move the highlight (enter browse mode, no cd); from the sidebar they move
-  the highlight. In `follow` mode they cd live from either side without
-  changing focus.
+  selected. **From the file list they always cd immediately and keep focus on
+  the panes** — the classic global jump, in both modes. From the sidebar they
+  move the highlight (deferred: Enter commits; `follow`: live cd). The
+  deferred "browse without moving the panes" rule applies only once you are
+  *in* the sidebar.
 - **`focus`** (binding: `<S-h>`/`<S-Left>`, global): give the sidebar focus
   (deferred: no cd; `follow`: cd to Home if nothing selected). No-op when the
   sidebar already holds it (the "Shift+H from the sidebar is a no-op" rule).
