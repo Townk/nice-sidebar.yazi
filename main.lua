@@ -311,6 +311,72 @@ local function blur_sidebar()
 	ui.render()
 end
 
+-- ------------------------------------------------------------- cd events --
+local function on_cd()
+	local cwd = tostring(cx.active.current.cwd)
+	local sel = core.track(S.items, S.selected, cwd)
+	if sel ~= S.selected then
+		S.selected = sel
+		if not sel and S.focus == "sidebar" then
+			-- Invariant #2, the other direction: no selection, no sidebar
+			-- focus.
+			S.focus = "list"
+			swap_cursor(false)
+		end
+		ui.render()
+	end
+	-- Volumes drift while yazi runs; piggyback a throttled rescan on
+	-- navigation (plus the mount event, when yazi publishes one).
+	local now = os.time()
+	if now - S.last_scan >= 5 then
+		S.last_scan = now
+		ya.emit("plugin", { "nice-sidebar", "refresh" })
+	end
+end
+
+-- --------------------------------------------------------------- bridges --
+-- Executed in the sync VM regardless of the calling context; registered at
+-- the top level so both VMs agree on the registration index.
+local nav = ya.sync(function(_, act)
+	if not S.cfg then
+		return
+	end
+	if act == "next" or act == "prev" then
+		-- Global: works from either focus side, does not change focus.
+		select_item(core.step(S.selected, act == "next" and 1 or -1, #S.items))
+	elseif act == "focus" then
+		focus_sidebar()
+	elseif act == "h" then
+		-- Sidebar focused: h/Left do nothing. List focused: leave, except
+		-- at the filesystem root, where one more "left" focuses the
+		-- sidebar.
+		if S.focus == "sidebar" then
+			return
+		end
+		if cx.active.parent then
+			ya.emit("leave", {})
+		else
+			focus_sidebar()
+		end
+	elseif act == "l" then
+		-- Sidebar focused: hand focus back to the file list. List focused:
+		-- stock enter.
+		if S.focus == "sidebar" then
+			blur_sidebar()
+		else
+			ya.emit("enter", {})
+		end
+	elseif act == "j" or act == "k" then
+		-- Focus-scoped: sidebar selection when the sidebar owns focus,
+		-- stock cursor movement otherwise.
+		if S.focus == "sidebar" then
+			select_item(core.step(S.selected, act == "j" and 1 or -1, #S.items))
+		else
+			ya.emit("arrow", { act == "j" and 1 or -1 })
+		end
+	end
+end)
+
 -- ----------------------------------------------------------------- setup --
 function M:setup(opts)
 	S.cfg = merge_cfg(opts)
@@ -422,9 +488,40 @@ function M:setup(opts)
 		end
 
 		function Parent:scroll() end
+
+		ps.sub("cd", on_cd)
+		-- Best-effort extra triggers: tab switches re-track the selection
+		-- against the new tab's cwd; mount events rescan volumes. Neither
+		-- event kind exists on every yazi build — absence is fine.
+		pcall(ps.sub, "tab", on_cd)
+		pcall(ps.sub, "mount", function()
+			S.last_scan = os.time()
+			ya.emit("plugin", { "nice-sidebar", "refresh" })
+		end)
 	end)
 	if not ok then
 		ya.dbg("nice-sidebar: setup failed, degrading to stock yazi: " .. tostring(err))
+	end
+	-- Populate pins/disks (and existence-filter the dirs) once at boot; the
+	-- startup cd event covers this too, but only after the throttle window.
+	ya.emit("plugin", { "nice-sidebar", "refresh" })
+end
+
+-- Placeholder async commands; Task 6 provides the real implementations.
+local function refresh() end
+local function pin() end
+
+-- ----------------------------------------------------------------- entry --
+-- Runs in the async context. Keymap args are POSITIONAL
+-- ("plugin nice-sidebar prev") — yazi 26.5 silently drops `--args=` forms.
+function M:entry(job)
+	local act = job.args and job.args[1]
+	if act == "refresh" then
+		refresh() -- Task 6
+	elseif act == "pin" then
+		pin() -- Task 6
+	elseif act then
+		nav(act)
 	end
 end
 
