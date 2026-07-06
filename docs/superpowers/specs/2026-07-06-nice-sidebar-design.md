@@ -89,13 +89,17 @@ Rules:
 | Section header (H2) | default fg, bold | `section` |
 | Rules | `darkgray` | `separator` |
 | Item label + icon | default fg | `item` |
-| Selected item | `reversed` full-width row | `selected_bg` / `selected_fg` (both set → replaces reversed) |
+| Selected item, sidebar focused | `reversed` full-width row | `selected_bg` / `selected_fg` (both set → replaces reversed) |
+| Selected item, list focused | bold (no bg) full-width row | `selected_inactive_bg` / `selected_inactive_fg` |
+| File cursor while sidebar focused | untouched | `cursor_bg` / `cursor_fg` (both set → restyles `th.indicator.current` on focus, restored on blur) |
 
 Every `colors` value accepts anything `ui.Style():fg()` takes (named ANSI or
 `#rrggbb`). The author's personal config passes hexes from the chezmoi theme
 bridge (H1 = `roles.ui.title`, H2 = `roles.ui.fg` bold, rules =
-`roles.ui.separator`, selected = `extended.tab.active_bg/active_fg`) — that
-wiring lives in the consumer's `init.lua`, not in this plugin.
+`roles.ui.separator`, selected = `extended.tab.active_bg/active_fg`,
+inactive-selected + cursor = `extended.tab.bg/fg` — the exact tm-gate
+treatment) — that wiring lives in the consumer's `init.lua`, not in this
+plugin.
 
 ## Sections
 
@@ -145,7 +149,7 @@ Shown only when `ya.target_os() == "macos"` and `setup{ show_disks ~= false }`.
 - Triggers: once from `setup()` (via `ya.emit("plugin", ...)`), and re-triggered
   from the `cd`/`tab` events, throttled to at most one scan per 5 s. A scan
   failure keeps the previous list.
-- Icons: internal disk `󰋊`, disk image ``, external/removable `󱊞`
+- Icons: internal disk `󰋊`, disk image ``, external/removable `󱊞`
   (overridable via `setup{ disk_icons = { internal, image, external } }`).
 
 ## Layout
@@ -166,32 +170,74 @@ slot).
 ## Interaction
 
 State lives in the sync VM: `selected` (item index or `nil` — **`nil` at
-startup**), the flattened selectable item list, pins, and the volume cache.
+startup**), `focus` (`"list"` or `"sidebar"` — **`"list"` at startup**), the
+flattened selectable item list, pins, and the volume cache.
 
-- **`plugin nice-sidebar prev` / `next`** (suggested binding: `K` / `J`): move
-  the selection through selectable rows only (headers, rules, blanks are
-  skipped), clamped at both ends, crossing sections. When nothing is selected,
-  **both** commands select the first item (Home). Every selection change
-  immediately `ya.emit("cd", ...)` to the item's path.
-- **cd tracking** (`ps.sub("cd")`): after any cd — from the sidebar or normal
-  navigation —
-  1. if the new cwd equals a sidebar item's path exactly, that item becomes
-     selected (exact match beats an umbrella match, so `~/Desktop` selects
-     Desktop, not Home; if two items share a path — e.g. a pin duplicating a
-     core dir — the first in list order wins);
-  2. else if an item is selected and the new cwd is still inside its umbrella
-     (path-component prefix), selection is kept;
-  3. else the selection clears.
-- **Mouse**: `Parent:click` maps the clicked row to its item (select + cd);
-  clicks on non-items do nothing. `Parent:scroll` is a no-op. Nothing can
-  navigate the underlying parent folder through that column.
-- **`plugin nice-sidebar pin`** (suggested binding: `b p`): toggle pin, as
-  above.
-- **`plugin nice-sidebar refresh`**: manual volume rescan (also used
-  internally).
+Two invariants tie the model together:
+
+- **Selection = cd.** Every selection change immediately `ya.emit("cd", ...)`
+  to the item's path, from any trigger (keys, mouse, focus).
+- **A focused sidebar always has a selection.** Any action that gives the
+  sidebar focus while nothing is selected selects Home (the first item) — and
+  therefore cds there.
+
+### Commands
+
+- **`next` / `prev`** (bindings: `<S-j>`/`<S-Down>` and `<S-k>`/`<S-Up>`):
+  move the selection **globally** — they work from either focus side and do
+  not change focus. Movement walks selectable rows only (headers, rules,
+  blanks are skipped), clamped at both ends, crossing sections. When nothing
+  is selected, both commands select Home.
+- **`focus`** (binding: `<S-h>`/`<S-Left>`, global): give the sidebar focus.
+  No-op when the sidebar already holds it (this is the "Shift+H from the
+  sidebar is a no-op" rule).
+- **`h`** (bindings: `h`, `<Left>`): focus-scoped dispatch —
+  sidebar focused → **no-op**; list focused at the filesystem root (the tab
+  has no parent folder) → focus the sidebar; otherwise → `leave` (stock
+  behavior).
+- **`l`** (bindings: `l`, `<Right>`): focus-scoped dispatch — sidebar
+  focused → return focus to the file list (selection untouched); list
+  focused → `enter` (stock behavior).
+- **`j` / `k`** (bindings: `j`/`<Down>`, `k`/`<Up>`): focus-scoped dispatch —
+  sidebar focused → same as `next`/`prev`; list focused → `arrow 1`/`arrow -1`
+  (stock cursor movement).
+- **`pin`** (suggested binding: `b p`): toggle pin, as above.
+- **`refresh`**: manual volume rescan (also used internally).
+
+### cd tracking (`ps.sub("cd")`)
+
+After any cd — from the sidebar or normal navigation —
+
+1. if the new cwd equals a sidebar item's path exactly, that item becomes
+   selected (exact match beats an umbrella match, so `~/Desktop` selects
+   Desktop, not Home; if two items share a path — e.g. a pin duplicating a
+   core dir — the first in list order wins);
+2. else if an item is selected and the new cwd is still inside its umbrella
+   (path-component prefix), selection is kept;
+3. else the selection clears — and if the sidebar held focus, focus returns
+   to the file list (the second invariant: no focused sidebar without a
+   selection).
+
+### Mouse
+
+- Click on an item row: select + cd, and the sidebar takes focus.
+- Click anywhere else in the column: the sidebar takes focus; an existing
+  selection is kept, otherwise Home is selected (invariant above).
+- `Parent:scroll` is a no-op. Nothing can navigate the underlying parent
+  folder through that column.
+
+### Focus feedback
+
+The selected row renders with the focused style while the sidebar holds
+focus and with the inactive style otherwise (see §Colors). Optionally, when
+`colors.cursor_bg/cursor_fg` are set, the file-list cursor
+(`th.indicator.current`) is restyled with them while the sidebar holds focus
+and restored on blur — the tm-gate treatment, showing at a glance which side
+owns j/k.
 
 The plugin never rebinds keys itself; the README documents the suggested
-`prepend_keymap` rows.
+`prepend_keymap` rows (including the `j`/`k`/`h`/`l`/arrow dispatch rows,
+which are required for the focus model to work).
 
 ## Config API (complete)
 
@@ -202,11 +248,13 @@ require("nice-sidebar"):setup {
   width = 26,                    -- sidebar column width (cells)
   dirs = { ... },                -- see §Core directories (replaces defaults)
   show_disks = true,
-  disk_icons = { internal = "󰋊", image = "", external = "󱊞" },
+  disk_icons = { internal = "󰋊", image = "", external = "󱊞" },
   pins_file = nil,               -- default: XDG state path
   colors = {                     -- all optional; see §Colors
     title = nil, section = nil, separator = nil, item = nil,
-    selected_bg = nil, selected_fg = nil,
+    selected_bg = nil, selected_fg = nil,                    -- sidebar focused
+    selected_inactive_bg = nil, selected_inactive_fg = nil,  -- list focused
+    cursor_bg = nil, cursor_fg = nil,  -- file cursor while sidebar focused
   },
 }
 ```
@@ -232,13 +280,18 @@ narrow).
 
 - Pure-logic self-tests (run headless with plain `lua`): item flattening +
   header skipping, umbrella prefix matching (incl. `Home` vs `Desktop`
-  nesting), pin toggle round-trip, label truncation, volume icon mapping.
-- Manual UX pass in a live yazi: mock fidelity (padding/rules/colors), K/J
-  walk incl. empty-selection → Home, immediate cd, umbrella clearing, exact
-  cd adoption, click-to-select, pinned-section appearance/disappearance, disk
-  image mount/unmount, narrow-terminal windowing, full-border + toggle-pane
-  coexistence, and a tm scrub session (`g t`) confirming tm-gate still owns the
-  column there.
+  nesting), focus/selection invariants (focus with no selection → Home;
+  selection cleared → focus falls back to the list), pin toggle round-trip,
+  label truncation, volume icon mapping.
+- Manual UX pass in a live yazi: mock fidelity (padding/rules/colors),
+  Shift+J/K walk incl. empty-selection → Home, immediate cd, umbrella
+  clearing, exact cd adoption; focus round-trip (Shift+H in, `h`/`Left` at
+  the filesystem root in, `l`/`Right` out, no-op keys inside, j/k scoping
+  each side, cursor restyle when configured); click on item and on empty
+  sidebar area; pinned-section appearance/disappearance; disk image
+  mount/unmount; narrow-terminal windowing; full-border + toggle-pane
+  coexistence; and a tm scrub session (`g t`) confirming tm-gate still owns
+  the column there.
 
 ## Consumer integration (author's chezmoi repo — follow-up, separate change)
 
@@ -246,11 +299,15 @@ narrow).
   bump inline per repo convention).
 - `init.lua`: guarded `setup{}` call passing theme-bridge colors + the extra
   dirs (Depot, Notes, Projects, Public) with the icons from the design mock.
-- `keymap.toml`: rebind `K`/`J` to `plugin nice-sidebar prev|next`, add
-  `b p` → `plugin nice-sidebar pin`; delete the `parent-arrow.yazi` plugin and
-  its bindings (parent siblings are never displayed anymore).
-- tm sessions need no changes: their K/J rows are injected at the head of the
-  keymap and win, and the guarded setup never runs there.
+- `keymap.toml`: rebind `K`/`J` (+ `<S-Up>`/`<S-Down>`) to
+  `plugin nice-sidebar prev|next`; rebind `H` and `<S-Left>` to
+  `plugin nice-sidebar focus` — **`H` currently runs `bypass reverse`, which
+  this replaces** (parent siblings are never displayed, so reverse-bypass has
+  nowhere to go); add the `j`/`k`/`h`/`l`/`<Up>`/`<Down>`/`<Left>`/`<Right>`
+  dispatch rows; add `b p` → `plugin nice-sidebar pin`; delete the
+  `parent-arrow.yazi` plugin and its `K`/`J` bindings.
+- tm sessions need no changes: their K/J/H/L and j/k/h/l rows are injected at
+  the head of the keymap and win, and the guarded setup never runs there.
 
 ## Deferred
 
