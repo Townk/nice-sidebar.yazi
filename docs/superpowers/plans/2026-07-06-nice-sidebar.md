@@ -1355,7 +1355,10 @@ git commit -m "feat: async refresh (dirs, pins, disks) and the pin command"
 
 - [ ] **Step 1: Write `README.md`**
 
-```markdown
+The file content is everything between the `````markdown` fence markers
+(the README itself contains three-backtick fences — copy them verbatim):
+
+`````markdown
 # nice-sidebar.yazi
 
 A Finder-style sidebar for [Yazi](https://yazi-rs.github.io), living in the
@@ -1533,7 +1536,7 @@ end
 ## License
 
 MIT — see [LICENSE](LICENSE).
-```
+`````
 
 - [ ] **Step 2: Format check**
 
