@@ -1007,9 +1007,11 @@ function Staging:reflow()
 	return { self }
 end
 function Staging:redraw()
+	-- Degrade gracefully: a render error hides the panel rather than blanking
+	-- the whole frame. Logged (like setup) instead of surfaced on-screen.
 	local ok, res = pcall(render_staging, self._area)
 	if not ok then
-		pcall(ya.notify, { title = "nice-sidebar staging", content = tostring(res), level = "error", timeout = 10 })
+		ya.dbg("nice-sidebar: staging redraw failed: " .. tostring(res))
 		return {}
 	end
 	return res

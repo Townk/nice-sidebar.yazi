@@ -64,31 +64,47 @@ require("nice-sidebar"):setup({})
 
 And in `~/.config/yazi/keymap.toml` — the plugin never rebinds keys itself;
 these rows are the intended dialect (the `j`/`k`/`h`/`l`/arrow rows are
-required for the focus model):
+required for the focus model). **Every act is a single token** — Yazi 26.5
+passes a plugin only its first positional argument, so multi-word forms like
+`plugin nice-sidebar guard arrow bot` silently lose the tail; the acts emit
+any fallthrough themselves.
 
 ```toml
 [mgr]
 prepend_keymap = [
-  { on = "K",          run = "plugin nice-sidebar prev",  desc = "Sidebar: select the previous item" },
-  { on = "J",          run = "plugin nice-sidebar next",  desc = "Sidebar: select the next item" },
-  { on = "<S-Up>",     run = "plugin nice-sidebar prev",  desc = "Sidebar: select the previous item" },
-  { on = "<S-Down>",   run = "plugin nice-sidebar next",  desc = "Sidebar: select the next item" },
-  { on = "H",          run = "plugin nice-sidebar focus", desc = "Sidebar: focus" },
-  { on = "<S-Left>",   run = "plugin nice-sidebar focus", desc = "Sidebar: focus" },
-  { on = "<S-Right>",  run = "plugin nice-sidebar blur",  desc = "Sidebar: focus the file list" },
-  { on = "L",          run = "plugin nice-sidebar blur",  desc = "Sidebar: focus the file list" },
-  { on = "h",          run = "plugin nice-sidebar h",     desc = "Leave; focus the sidebar at the root" },
-  { on = "<Left>",     run = "plugin nice-sidebar h",     desc = "Leave; focus the sidebar at the root" },
-  { on = "l",          run = "plugin nice-sidebar l",     desc = "Enter; leave the sidebar" },
-  { on = "<Right>",    run = "plugin nice-sidebar l",     desc = "Enter; leave the sidebar" },
-  { on = "<Enter>",    run = "plugin nice-sidebar enter plugin bypass smart-enter", desc = "Open / re-anchor" },
-  { on = "G",          run = "plugin nice-sidebar guard arrow bot", desc = "Bottom (list only)" },
-  { on = [ "g", "g" ], run = "plugin nice-sidebar guard arrow top", desc = "Top (list only)" },
-  { on = "j",          run = "plugin nice-sidebar j",     desc = "Down (list) / next (sidebar)" },
-  { on = "<Down>",     run = "plugin nice-sidebar j",     desc = "Down (list) / next (sidebar)" },
-  { on = "k",          run = "plugin nice-sidebar k",     desc = "Up (list) / previous (sidebar)" },
-  { on = "<Up>",       run = "plugin nice-sidebar k",     desc = "Up (list) / previous (sidebar)" },
-  { on = [ "b", "p" ], run = "plugin nice-sidebar pin",   desc = "Sidebar: pin or unpin this directory" },
+  # Sidebar item navigation (from the panes)
+  { on = "K",          run = "plugin nice-sidebar prev",  desc = "Sidebar: previous item" },
+  { on = "J",          run = "plugin nice-sidebar next",  desc = "Sidebar: next item" },
+  { on = "<S-Up>",     run = "plugin nice-sidebar prev",  desc = "Sidebar: previous item" },
+  { on = "<S-Down>",   run = "plugin nice-sidebar next",  desc = "Sidebar: next item" },
+
+  # Horizontal focus slider: sidebar │ file panes │ staging panel
+  { on = "H",          run = "plugin nice-sidebar left",  desc = "Focus left: staging -> panes -> sidebar" },
+  { on = "<S-Left>",   run = "plugin nice-sidebar left",  desc = "Focus left" },
+  { on = "L",          run = "plugin nice-sidebar right", desc = "Focus right: sidebar -> panes -> staging; else bypass" },
+  { on = "<S-Right>",  run = "plugin nice-sidebar right", desc = "Focus right" },
+  { on = "<Esc>",      run = "plugin nice-sidebar left",  desc = "Step focus back toward the panes" },
+
+  # Within-region navigation (interpreted by the focused region)
+  { on = "h",          run = "plugin nice-sidebar h",     desc = "List: leave · Panel: Staged lane" },
+  { on = "<Left>",     run = "plugin nice-sidebar h",     desc = "List: leave · Panel: Staged lane" },
+  { on = "l",          run = "plugin nice-sidebar l",     desc = "List: enter · Sidebar: focus panes · Panel: Clipboard lane" },
+  { on = "<Right>",    run = "plugin nice-sidebar l",     desc = "List: enter · Sidebar: focus panes · Panel: Clipboard lane" },
+  { on = "j",          run = "plugin nice-sidebar j",     desc = "Down (list / sidebar / panel)" },
+  { on = "<Down>",     run = "plugin nice-sidebar j",     desc = "Down (list / sidebar / panel)" },
+  { on = "k",          run = "plugin nice-sidebar k",     desc = "Up (list / sidebar / panel)" },
+  { on = "<Up>",       run = "plugin nice-sidebar k",     desc = "Up (list / sidebar / panel)" },
+  { on = "<Enter>",    run = "plugin nice-sidebar enter", desc = "List: open/smart-enter · Sidebar: commit · Panel: reveal" },
+  { on = "G",          run = "plugin nice-sidebar guard_bot", desc = "Bottom (list only)" },
+  { on = [ "g", "g" ], run = "plugin nice-sidebar guard_top", desc = "Top (list only)" },
+
+  # Selection + staging/clipboard panel
+  { on = "<Space>",    run = "plugin nice-sidebar space",  desc = "Toggle selection (cursor stays) / unstage in panel" },
+  { on = "<A-Space>",  run = "plugin nice-sidebar sspace", desc = "Toggle selection (move next) / unstage in panel" },
+  { on = "<A-s>",      run = "plugin nice-sidebar lane_staged",    desc = "Jump to the Staged lane" },
+  { on = "<A-c>",      run = "plugin nice-sidebar lane_clipboard", desc = "Jump to the Clipboard lane" },
+
+  { on = [ "b", "p" ], run = "plugin nice-sidebar pin",   desc = "Sidebar: pin/unpin this directory" },
 ]
 ```
 
@@ -115,12 +131,12 @@ The table below is the default (deferred) mode:
 | --- | --- | --- |
 | `J` / `Shift+Down` | select next + cd (focus stays on panes) | highlight next (no cd) |
 | `K` / `Shift+Up` | select previous + cd (focus stays on panes) | highlight previous (no cd) |
-| `H` / `Shift+Left` | focus the sidebar | nothing |
+| `H` / `Shift+Left` | focus the sidebar (slider: → sidebar) | nothing |
+| `L` / `Shift+Right` | staging panel if populated, else `bypass` (slider: → panel) | cancel: focus panes |
 | `h` / `Left` | leave; at `/`, focus the sidebar | nothing |
 | `l` / `Right` | enter | cancel: focus panes, highlight reverts to cwd |
-| `L` / `Shift+Right` | fallthrough (see below) | cancel: focus panes |
-| `Enter` | fallthrough (open / smart-enter) | **commit**: cd + jump to panes |
-| `G`, `g g`, … | fallthrough (list navigation) | nothing (suppressed) |
+| `Enter` | open / smart-enter | **commit**: cd + jump to panes |
+| `G`, `g g`, … | list navigation | nothing (suppressed) |
 | `j` / `Down` | cursor down | highlight next (no cd) |
 | `k` / `Up` | cursor up | highlight previous (no cd) |
 | `b p` | pin/unpin the hovered directory | pin/unpin the selected sidebar item |
@@ -151,23 +167,60 @@ cell from the column edges. Without configured selection colors, the
 list-focused fallback is plain bold text — no pill, since there is no
 background color to shape the caps with.
 
-`blur`, `enter`, and `guard` all accept a **fallthrough**: any keymap args
-after the command run as a yazi command when the file list holds focus, and
-are suppressed when the sidebar holds focus. This is how a key keeps its
-stock behavior on the list side while staying inert over the sidebar:
+Each act **carries its own fallthrough** and is a single token (Yazi 26.5
+gives a plugin only its first positional argument, so keymap-level fallthrough
+words are dropped):
 
-- `blur plugin bypass` — `L` bypasses on the list, blurs on the sidebar.
-- `enter plugin bypass smart-enter` — `Enter` opens/smart-enters on the
-  list; on the sidebar it re-anchors the file column and keeps focus.
-- `guard arrow bot` — `G` jumps to the bottom on the list; nothing on the
-  sidebar. Wrap any other navigation key the same way (`guard arrow top`
-  for `g g`, etc.).
+- `right` — `L`/`Shift+Right` step focus right; from the panes with nothing
+  staged it runs `bypass` (recursive-enter) itself.
+- `enter` — on the list it opens files / recursive-enters directories; on the
+  sidebar it commits (cd + jump); on the panel it reveals the hovered row.
+- `guard_bot` / `guard_top` — `G` / `g g` jump the file list to bottom/top,
+  and are inert while the sidebar or panel owns focus.
 
 `plugin nice-sidebar refresh` manually rescans mounted volumes (rescans also
 happen on navigation, throttled, and on mount events when yazi publishes
 them). Disks cover `/Volumes` plus disk images attached at custom
 mountpoints (say, a sparse bundle mounted under `~/Projects`); labels use
 the volume's name, not its mountpoint.
+
+## Selection staging & clipboard panel
+
+When you have files selected (`<Space>`) or yanked (`y`/`x`), a compact panel
+docks at the **bottom of the preview column** — a third focus region on the
+same Shift slider (sidebar │ panes │ **panel**). It has two lanes:
+
+- **Staged** — the current tab's `<Space>` selection (per-tab). Files often
+  live in other directories; rows show a cwd-relative or `~`-abbreviated path.
+- **Clipboard** — the global yank register (`y` copy / `x` cut). Cut entries
+  render in the cut colour.
+
+A tab-bar header shows `stage (N) | 󰅍 clipboard (M)` (only populated lanes get
+a label), with a coloured `▁` bar under the active lane. The panel grows one
+row per file, caps at half the preview height, and shows a scrollbar past that.
+
+**Keys** (see the keymap above):
+
+| Key | Panes / sidebar | Staged lane | Clipboard lane |
+| --- | --- | --- | --- |
+| `Space` | toggle selection, cursor stays | **unstage** the row | — (view-only) |
+| `Alt+Space` | toggle selection, move next | unstage, move next | — |
+| `Alt+s` / `Alt+c` | jump to the Staged / Clipboard lane | | |
+| `h` / `l` | *(region nav)* | switch lane (Staged ↔ Clipboard) | |
+| `j` / `k`, wheel | *(region nav)* | move the cursor | move the cursor |
+| `Enter` | *(open)* | reveal the row → panes | reveal the row → panes |
+| `y` / `x` | yank / cut **all staged** | same | same |
+
+The panel is a first-class focus region: while it owns focus the file-list
+cursor dims (like the sidebar), and an empty selection *and* clipboard drops
+focus back to the panes.
+
+**Clipboard is view-only.** Yazi exposes the yank register read-only to
+plugins — it can only be cleared wholesale (`unyank`) or set from a native
+object with no Lua constructor — so a single clipboard entry cannot be removed
+from the panel. Use `Enter` to reveal, then manage it in the panes.
+
+Disable the panel with `staging = { enabled = false }`.
 
 ## Configuration
 
@@ -192,6 +245,13 @@ require("nice-sidebar"):setup({
 	show_disks = true, -- macOS only; auto-hidden elsewhere
 	disk_icons = { internal = "󰋊", image = "", external = "󱊞" },
 	pins_file = nil, -- default: $XDG_STATE_HOME/yazi/nice-sidebar/pins
+	staging = { -- the selection / clipboard panel
+		enabled = true, -- false: no panel, byte-for-byte the old behaviour
+		max_ratio = 0.5, -- cap: fraction of the preview height
+		reveal_on_enter = true, -- Enter on a row reveals it (cd + hover)
+		icon = "\239\128\156", -- staged rows/tab (U+F01C; byte escapes)
+		clipboard_icon = "󰅍", -- clipboard rows/tab
+	},
 	colors = { -- named ANSI or "#rrggbb"; nil = portable default
 		title = nil, -- H1 (default: magenta, bold)
 		section = nil, -- H2 (default: bold)
@@ -201,8 +261,12 @@ require("nice-sidebar"):setup({
 		selected_fg = nil, --   (default: reversed)
 		selected_inactive_bg = nil, -- selected row, list focused
 		selected_inactive_fg = nil, --   (default: bold)
-		cursor_bg = nil, -- file cursor while the sidebar holds focus
+		cursor_bg = nil, -- file cursor while the sidebar/panel holds focus
 		cursor_fg = nil, --   (default: untouched)
+		staged = nil, -- "stage" tab label (default: yellow)
+		clipboard = nil, -- "clipboard" tab label, copy (default: green)
+		clipboard_cut = nil, -- "clipboard" tab label, cut (default: red)
+		tab_rule = nil, -- panel tab-bar rule glyphs (default: separator)
 	},
 })
 ```
