@@ -154,6 +154,28 @@ t("panel_height: nil ratio defaults to one half", function()
 	eq({ p, v }, { 10, 9 })
 end)
 
+-- scrollbar -----------------------------------------------------------------
+t("scrollbar: everything fits yields nil", function()
+	eq(core.scrollbar(5, 10, 1), nil)
+	eq(core.scrollbar(10, 10, 1), nil)
+end)
+t("scrollbar: top of a long list sits at the top", function()
+	local s = core.scrollbar(100, 10, 1)
+	eq(s.y, 0)
+end)
+t("scrollbar: bottom of a long list sits at the track end", function()
+	local s = core.scrollbar(100, 10, 91) -- first = total - track_h + 1
+	eq(s.y, 10 - s.len)
+end)
+t("scrollbar: thumb is at least one row and fits the track", function()
+	local s = core.scrollbar(1000, 4, 1)
+	eq(s.len >= 1 and s.len <= 4, true)
+end)
+t("scrollbar: the middle sits between the ends", function()
+	local s = core.scrollbar(100, 10, 46)
+	eq(s.y > 0 and s.y < 10 - s.len, true)
+end)
+
 -- build --------------------------------------------------------------------
 local dirs = { { label = "Home", path = "/u", icon = "h" }, { label = "Desk", path = "/u/d", icon = "d" } }
 t("build: dirs only — title block, no sections", function()

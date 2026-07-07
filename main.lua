@@ -114,6 +114,23 @@ function core.panel_height(count, preview_h, max_ratio)
 	return panel, panel - 1
 end
 
+-- Scrollbar thumb over a track of `track_h` rows for `total` items, the
+-- visible window starting at `first` (1-based). Returns { y, len } as 0-based
+-- offsets into the track, or nil when everything fits. Thumb length is
+-- proportional (min 1), y clamped so the thumb never leaves the track.
+function core.scrollbar(total, track_h, first)
+	if track_h <= 0 or total <= track_h then
+		return nil
+	end
+	local len = math.max(1, math.floor(track_h * track_h / total + 0.5))
+	len = math.min(len, track_h)
+	local max_y = track_h - len
+	local denom = math.max(1, total - track_h)
+	local y = math.floor(((first or 1) - 1) * max_y / denom + 0.5)
+	y = math.max(0, math.min(max_y, y))
+	return { y = y, len = len }
+end
+
 -- Flatten the sections into render rows plus the ordered selectable item
 -- list. Empty pins/disks hide their whole section (header, rule, blank).
 function core.build(sections)
