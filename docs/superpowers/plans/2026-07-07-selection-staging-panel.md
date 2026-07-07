@@ -401,8 +401,8 @@ Add above the `function M:setup` line (module scope, so it closes over `core`/`u
 
 ```lua
 -- Render the staging panel into `area`: a divider row, then the visible slice
--- of the selection with a focused cursor pill, plus a right-edge scrollbar and
--- ⋮ overflow markers when the list is clipped. Writes S.stg.vp (visible line ->
+-- of the selection with a focused cursor pill, plus a right-edge scrollbar when
+-- the list overflows. Writes S.stg.vp (visible line ->
 -- selection index) and S.stg.first for click/scroll hit-testing.
 local function render_staging(area)
 	local w, h = area.w, area.h
@@ -509,7 +509,7 @@ stylua --check main.lua
 
 Then, in a real Yazi that loads this `main.lua` (symlink or `ya pkg` local install), confirm by eye:
 - Select 1 file (`<Space>`) → a 2-row panel (divider + 1 line) appears at the **bottom of the preview column**; the preview above shrinks.
-- Select more → panel grows one row per file; stops at half the preview height; the `█` scrollbar appears and `⋮`… (window edges) when clipped.
+- Select more → panel grows one row per file; stops at half the preview height; the `█` scrollbar thumb appears and tracks position when clipped.
 - Hover an **image/video** with a selection active → the preview still renders correctly in the shrunken area (no graphics corruption). *(Live-verification point (b).)*
 - Deselect all → panel vanishes, preview returns to full height.
 
@@ -696,7 +696,7 @@ stylua --check main.lua
 By eye, with a multi-file selection across two directories:
 - `Shift+L` / `Shift+Right` from the panes focuses the panel (cursor pill on row 1); with **no** selection it still runs `bypass`.
 - `Shift+H` / `Shift+Left` walks `staging → panes → sidebar`; `Shift+L` walks back.
-- While the panel is focused: `j`/`k` move the cursor and the window follows; `⋮` markers and scrollbar track it.
+- While the panel is focused: `j`/`k` move the cursor and the window follows; the scrollbar thumb tracks position.
 - `Enter` on a row cds to that file's directory, hovers it, and focus lands on the panes.
 - Deselect the last file while focused → panel hides, focus returns to panes.
 

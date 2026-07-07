@@ -149,9 +149,10 @@ sidebar.
 ## Scrolling
 
 - **Visible window**: reuse `core.window(total, visible_h, cursor)` to compute
-  the first/last visible selection rows, with the same `⋮` clipped-edge markers
-  the sidebar already renders. Keyboard `j`/`k` (when focused) move the cursor and
-  the window follows.
+  the first/last visible selection rows. Overflow is signalled by the
+  right-edge scrollbar alone (scrollbar-only; no `⋮` markers — those are the
+  sidebar's idiom for a column that has no scrollbar). Keyboard `j`/`k` (when
+  focused) move the cursor and the window follows.
 - **Scrollbar**: when `total > visible_h`, draw a thin thumb on the panel's right
   edge (track height `visible_h`, thumb size/position from `first`/`total`). A
   **new pure function** `core.scrollbar(total, visible_h, first)` returns the
@@ -286,8 +287,8 @@ Manual validation (Yazi is a TUI; behaviour verified live):
 
 - Select files across several directories; panel lists all, count matches
   Yazi's top-right counter.
-- Panel grows 1 line per file; stops at half preview height; scrollbar appears;
-  wheel scrolls; `⋮` markers at clipped edges.
+- Panel grows 1 line per file; stops at half preview height; the scrollbar
+  thumb appears and tracks position when the list overflows; wheel scrolls.
 - `Shift+L` from panes with a selection focuses the panel; with no selection
   runs `bypass`. `Shift+H` walks staging → panes → sidebar. `Esc` → panes.
 - `j`/`k` move the cursor while focused; `<Enter>` reveals the file and lands
