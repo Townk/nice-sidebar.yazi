@@ -489,6 +489,43 @@ local function blur_sidebar()
 	ui.render()
 end
 
+-- Focus the staging panel: only possible while it is visible (enabled + a
+-- non-empty selection). Blurs the sidebar first (focus is exclusive) and seeds
+-- the cursor at the top.
+local function stg_focus()
+	if S.focus == "staging" or not stg_visible() then
+		return
+	end
+	if S.focus == "sidebar" then
+		blur_sidebar()
+	end
+	S.focus = "staging"
+	S.stg.sel = 1
+	S.stg.first = 1
+	ui.render()
+end
+
+-- Hand focus from the staging panel back to the file panes.
+local function stg_blur()
+	if S.focus ~= "staging" then
+		return
+	end
+	S.focus = "list"
+	S.stg.sel = nil
+	ui.render()
+end
+
+-- Move the staging cursor by delta, clamped over the current selection count.
+local function stg_move(delta)
+	local n = sel_count()
+	if n == 0 then
+		stg_blur()
+		return
+	end
+	S.stg.sel = core.step(S.stg.sel, delta, n)
+	ui.render()
+end
+
 -- ------------------------------------------------------------- cd events --
 local function on_cd()
 	local cwd = tostring(cx.active.current.cwd)
@@ -509,6 +546,14 @@ local function on_cd()
 	if now - S.last_scan >= 5 then
 		S.last_scan = now
 		ya.emit("plugin", { "nice-sidebar", "refresh" })
+	end
+	-- Selection can empty out from a cd (leaving a folder whose files were
+	-- selected does not clear them, but a paste/delete might). If it did and
+	-- staging held focus, drop back to the panes.
+	if S.focus == "staging" and sel_count() == 0 then
+		S.focus = "list"
+		S.stg.sel = nil
+		ui.render()
 	end
 end
 
@@ -543,11 +588,21 @@ local nav = ya.sync(function(_, act, rest)
 			ya.emit(rest[1], { table.unpack(rest, 2) })
 		end
 	elseif act == "enter" then
-		-- Sidebar focused: CONFIRM the highlighted item — cd to it and jump
-		-- focus to the file panes (never runs list navigation underneath the
-		-- sidebar). This is the commit step of the deferred model, and in
-		-- follow mode it just re-anchors + jumps. List focused: fallthrough.
-		if S.focus == "sidebar" then
+		-- Staging focused: reveal the cursor file (if configured) and hand
+		-- focus to the panes. Sidebar focused: CONFIRM the highlighted item —
+		-- cd to it and jump focus to the file panes (never runs list
+		-- navigation underneath the sidebar). This is the commit step of the
+		-- deferred model, and in follow mode it just re-anchors + jumps. List
+		-- focused: fallthrough.
+		if S.focus == "staging" then
+			if S.stg.cfg.reveal_on_enter and S.stg.sel then
+				local sel = selection()
+				if sel[S.stg.sel] then
+					ya.emit("reveal", { sel[S.stg.sel] })
+				end
+			end
+			stg_blur()
+		elseif S.focus == "sidebar" then
 			select_item(S.selected)
 			blur_sidebar()
 		elseif rest and rest[1] then
@@ -555,16 +610,19 @@ local nav = ya.sync(function(_, act, rest)
 		end
 	elseif act == "guard" then
 		-- Generic list-navigation suppressor: swallow the key while the
-		-- sidebar holds focus, run the fallthrough otherwise (e.g.
-		-- "plugin nice-sidebar guard arrow bot" wraps G).
-		if S.focus ~= "sidebar" and rest and rest[1] then
+		-- sidebar or staging panel holds focus, run the fallthrough
+		-- otherwise (e.g. "plugin nice-sidebar guard arrow bot" wraps G).
+		if S.focus == "list" and rest and rest[1] then
 			ya.emit(rest[1], { table.unpack(rest, 2) })
 		end
 	elseif act == "h" then
-		-- Sidebar focused: h/Left do nothing. List focused: leave, except
-		-- at the filesystem root, where one more "left" focuses the
-		-- sidebar.
+		-- Sidebar focused: h/Left do nothing. Staging focused: leave to the
+		-- panes. List focused: leave, except at the filesystem root, where
+		-- one more "left" focuses the sidebar.
 		if S.focus == "sidebar" then
+			return
+		elseif S.focus == "staging" then
+			stg_blur()
 			return
 		end
 		if cx.active.parent then
@@ -580,14 +638,36 @@ local nav = ya.sync(function(_, act, rest)
 		else
 			ya.emit("enter", {})
 		end
+	elseif act == "left" then
+		-- staging -> panes -> sidebar ; sidebar stays.
+		if S.focus == "staging" then
+			stg_blur()
+		elseif S.focus == "list" then
+			focus_sidebar()
+		end
+	elseif act == "right" then
+		-- sidebar -> panes -> staging ; from panes with nothing staged,
+		-- run the fallthrough (bypass), preserving today's Shift+L.
+		if S.focus == "sidebar" then
+			blur_sidebar()
+		elseif S.focus == "list" then
+			if stg_visible() then
+				stg_focus()
+			elseif rest and rest[1] then
+				ya.emit(rest[1], { table.unpack(rest, 2) })
+			end
+		end
 	elseif act == "j" or act == "k" then
 		-- Focus-scoped: move the sidebar selection (deferred or live per
-		-- `follow`) when the sidebar owns focus, stock cursor movement
-		-- otherwise.
+		-- `follow`) when the sidebar owns focus, the staging cursor when the
+		-- panel owns focus, stock cursor movement otherwise.
+		local delta = act == "j" and 1 or -1
 		if S.focus == "sidebar" then
-			move(act == "j" and 1 or -1)
+			move(delta)
+		elseif S.focus == "staging" then
+			stg_move(delta)
 		else
-			ya.emit("arrow", { act == "j" and 1 or -1 })
+			ya.emit("arrow", { delta })
 		end
 	end
 end)
