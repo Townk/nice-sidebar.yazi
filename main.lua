@@ -101,6 +101,19 @@ function core.window(total, h, anchor)
 	return first, first + h - 1
 end
 
+-- Staging-panel height: content grows one line per selected file atop a
+-- single divider row, capped at floor(preview_h * ratio). Returns the total
+-- panel height (incl. divider) and the visible list height. count 0 or a
+-- preview too short to hold a divider + one line hides the panel (0, 0).
+function core.panel_height(count, preview_h, max_ratio)
+	if count <= 0 or preview_h < 2 then
+		return 0, 0
+	end
+	local cap = math.max(2, math.floor(preview_h * (max_ratio or 0.5)))
+	local panel = math.min(1 + count, cap)
+	return panel, panel - 1
+end
+
 -- Flatten the sections into render rows plus the ordered selectable item
 -- list. Empty pins/disks hide their whole section (header, rule, blank).
 function core.build(sections)
