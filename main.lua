@@ -500,6 +500,10 @@ local function stg_focus()
 		blur_sidebar()
 	end
 	S.focus = "staging"
+	-- Dim the file-list cursor so exactly one region reads as focused, the
+	-- same feedback the sidebar uses (swap_cursor is a no-op unless the
+	-- cursor_bg/cursor_fg colors are configured).
+	swap_cursor(true)
 	S.stg.sel = 1
 	S.stg.first = 1
 	ui.render()
@@ -511,6 +515,7 @@ local function stg_blur()
 		return
 	end
 	S.focus = "list"
+	swap_cursor(false)
 	S.stg.sel = nil
 	ui.render()
 end
@@ -552,6 +557,7 @@ local function on_cd()
 	-- staging held focus, drop back to the panes.
 	if S.focus == "staging" and sel_count() == 0 then
 		S.focus = "list"
+		swap_cursor(false)
 		S.stg.sel = nil
 		ui.render()
 	end
