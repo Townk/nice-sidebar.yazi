@@ -770,6 +770,25 @@ local nav = ya.sync(function(_, act, rest)
 				ya.emit("arrow", { 1 })
 			end
 		end
+	elseif act == "lane" then
+		-- Alt+s / Alt+c: jump straight to a lane — focus the panel and switch
+		-- to it (a no-op when that lane is empty).
+		local name = rest and rest[1]
+		if name ~= "staged" and name ~= "clipboard" then
+			return
+		end
+		local staged, clip = lane_counts()
+		if (name == "clipboard" and clip or staged) == 0 then
+			return
+		end
+		S.stg.lane = name
+		S.stg.sel = 1
+		S.stg.first = 1
+		if S.focus ~= "staging" then
+			stg_focus()
+		else
+			ui.render()
+		end
 	elseif act == "j" or act == "k" then
 		-- Focus-scoped: move the sidebar selection (deferred or live per
 		-- `follow`) when the sidebar owns focus, the staging cursor when the
@@ -869,17 +888,33 @@ local function render_staging(area)
 	-- cut colour when the register is a cut).
 	local rule = style(c.tab_rule or c.separator or "darkgray")
 	local staged_n, clip_n = lane_counts()
-	local stage_style = style(c.staged or "yellow", lane == "staged")
-	local clip_color = is_cut and (c.clipboard_cut or "red") or (c.clipboard or "green")
-	local clip_style = style(clip_color, lane == "clipboard")
-	local spans = {
-		ui.Span("── "):style(rule),
-		ui.Span("stage (" .. staged_n .. ")"):style(stage_style),
-		ui.Span(" │ "):style(rule),
-		ui.Span(S.stg.cfg.clipboard_icon .. " clipboard (" .. clip_n .. ")"):style(clip_style),
-		ui.Span(" "):style(rule),
-	}
-	local used = ui.Line(spans):width()
+	local lead, mid, trail = "── ", " │ ", " "
+	-- Only lanes with content get a label; the empty lane is hidden.
+	local segs = {}
+	if staged_n > 0 then
+		segs[#segs + 1] = { "stage (" .. staged_n .. ")", style(c.staged or "yellow", lane == "staged") }
+	end
+	if clip_n > 0 then
+		local clip_color = is_cut and (c.clipboard_cut or "red") or (c.clipboard or "green")
+		segs[#segs + 1] =
+			{ S.stg.cfg.clipboard_icon .. " clipboard (" .. clip_n .. ")", style(clip_color, lane == "clipboard") }
+	end
+	-- Measure with throwaway spans: ui.Line consumes the Span userdata, so the
+	-- real spans below must be built exactly once, not reused for a width probe.
+	local function tw(s)
+		return ui.Line({ ui.Span(s) }):width()
+	end
+	local spans = { ui.Span(lead):style(rule) }
+	local used = tw(lead) + tw(trail)
+	for i, seg in ipairs(segs) do
+		if i > 1 then
+			spans[#spans + 1] = ui.Span(mid):style(rule)
+			used = used + tw(mid)
+		end
+		spans[#spans + 1] = ui.Span(seg[1]):style(seg[2])
+		used = used + tw(seg[1])
+	end
+	spans[#spans + 1] = ui.Span(trail):style(rule)
 	if w > used then
 		spans[#spans + 1] = ui.Span(string.rep("─", w - used)):style(rule)
 	end
@@ -945,7 +980,12 @@ function Staging:reflow()
 	return { self }
 end
 function Staging:redraw()
-	return render_staging(self._area)
+	local ok, res = pcall(render_staging, self._area)
+	if not ok then
+		pcall(ya.notify, { title = "nice-sidebar staging", content = tostring(res), level = "error", timeout = 10 })
+		return {}
+	end
+	return res
 end
 function Staging:touch(event, step) end
 function Staging:click(event, up)
