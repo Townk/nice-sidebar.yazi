@@ -318,8 +318,83 @@ an error.
 
 ## Deferred
 
-- Yanked/cut register view (a second panel or a mode toggle).
-- Removing an item from the selection directly in the panel (e.g. a key to
-  deselect the cursor row).
 - Linux/non-macOS parity is inherited from the base plugin; nothing panel-specific
   is macOS-only.
+
+---
+
+## Addendum (2026-07-07): two-lane panel + key routing
+
+Live UX validation confirmed the single-lane panel (rendering, focus slider,
+scrolling, mouse) works — the earlier "double-step" was an unrelated terminal
+issue double-emitting Shift keys, not the plugin. During that session the scope
+grew: the panel becomes a **two-lane manager** and gains selection/clipboard key
+routing. This promotes the two items previously in **Deferred** (yanked/cut
+register view; removing an item from the panel) into scope, and adds key routing.
+
+### Two tabs
+
+The panel carries two lanes, switched while it holds focus:
+
+| Tab | Source | Scope | Notes |
+|-----|--------|-------|-------|
+| **Staged** | `cx.active.selected` | per-tab | the `<Space>` selection (existing lane) |
+| **Clipboard** | `cx.yanked` | global | the yank register; **cut** items render dimmed + a ✂ glyph, **copies** render normal |
+
+- A **tab-bar row** replaces the single divider: `[ Staged N │ Clipboard M ]`,
+  active lane highlighted, counts live. It is chrome (1 row), like the divider.
+- The panel is **visible when either lane is non-empty**; hidden when both empty.
+  The empty-selection focus invariant generalises: focus can rest on the panel
+  only while it is visible; if both lanes empty, focus drops to the panes.
+- Height/cap/scrollbar logic is unchanged, applied to the **active** lane's list.
+
+### Focus & tab switching
+
+The panel remains **one focus region** on the Shift slider (sidebar │ panes │
+panel). While the panel is focused:
+
+- `h` / `l` switch the active lane (Staged ↔ Clipboard). Leaving the panel is
+  `Shift+H` (the region slider), consistent with the sidebar's context-scoped
+  `h`/`l`.
+- `j` / `k` move the cursor within the active lane; wheel scrolls it.
+
+### Key routing
+
+`<Space>` is rebound from Yazi's default `[ "toggle", "arrow 1" ]` (toggle +
+move) to a plugin-routed command; `<Shift+Space>` is added (not in the default
+keymap). Both route through the plugin so focus decides their target.
+
+| Key | Panes/sidebar focused | Staged tab focused | Clipboard tab focused |
+|-----|-----------------------|--------------------|-----------------------|
+| `Space` | toggle the center-hovered file's selection, **cursor stays** | **unstage** the hovered file (`toggle_all { url, state="off" }`), cursor stays | **remove** the hovered file from the register (`update_yanked`), cursor stays |
+| `Shift+Space` | toggle the center-hovered file, **move to next** | unstage hovered, **move cursor to next** | remove hovered, **move cursor to next** |
+| `y` / `x` | `yank` / `yank --cut` — **all staged files** (Yazi default) | same (unchanged) | same |
+| `Enter` | (Yazi default) | **reveal** hovered → focus panes | **reveal** hovered → focus panes |
+| `p` / `P` | `paste` (Yazi default) | paste (default) | paste (default) |
+
+### Individual-file operations: unsupported (no-op)
+
+Rename, delete, create, and other **individual-file** operations are **not
+supported inside the panel** — a deliberate no-op. Yazi's ops act on the current
+folder's hovered file and cannot target an arbitrary staged/clipboard file (which
+may live in another directory) without navigating to it; rather than reveal-then-
+operate or intercept every op key, the panel simply does not offer them. `Enter`
+(reveal) is the bridge: it jumps to the file in the panes, where all normal ops
+then apply. `y`/`x` remain **bulk** operations over the whole staged set, never
+per-row — this is Yazi's native behaviour and is preserved as-is.
+
+### Mechanisms (verified against Yazi 26.5.6)
+
+- **Unstage one file:** `ya.emit("toggle_all", { url, state = "off" })` — works
+  across directories.
+- **Remove one clipboard entry:** re-emit `update_yanked` with the register minus
+  that URL (register read from `cx.yanked`, which exposes the cut/copy flag).
+  Exact payload shape verified at implementation.
+- **Reveal:** `ya.emit("reveal", { url })` (cd to its folder + hover it).
+
+### Non-goals (still)
+
+- No paste/rename/delete *from* the panel (see above).
+- No reordering within a lane.
+- Clipboard lane shows the register; it does not itself perform paste (that stays
+  on `p`/`P` in the panes).
