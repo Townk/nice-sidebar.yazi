@@ -810,9 +810,32 @@ function Staging:redraw()
 	return render_staging(self._area)
 end
 function Staging:touch(event, step) end
--- click/scroll bodies are added in Task 7.
-function Staging:click(event, up) end
-function Staging:scroll(event, step) end
+function Staging:click(event, up)
+	if up or event.is_middle then
+		return
+	end
+	stg_focus()
+	local line = event.y - self._area.y + 1
+	local idx = S.stg.vp[line]
+	if idx then
+		S.stg.sel = idx
+		ui.render()
+	end
+end
+
+function Staging:scroll(event, step)
+	-- Wheel scrolls the list regardless of focus; clamp over the selection.
+	local n = sel_count()
+	if n == 0 then
+		return
+	end
+	if S.focus == "staging" then
+		S.stg.sel = core.step(S.stg.sel, step, n)
+	else
+		S.stg.first = math.max(1, math.min(n, (S.stg.first or 1) + step))
+	end
+	ui.render()
+end
 
 -- ----------------------------------------------------------------- setup --
 function M:setup(opts)
@@ -977,6 +1000,28 @@ function M:setup(opts)
 		end
 
 		function Parent:scroll() end
+
+		-- Clicking the center/preview columns hands focus to the panes: run the
+		-- stock click, then blur whichever region held focus. Guarded (blur is a
+		-- no-op unless that region is focused), so it is inert once the panes own
+		-- focus. Supersedes the consumer-side reclaim shim.
+		local function reclaim(comp)
+			local orig = comp.click
+			comp.click = function(self, ev, up)
+				if orig then
+					orig(self, ev, up)
+				end
+				if not up and not ev.is_middle then
+					if S.focus == "sidebar" then
+						blur_sidebar()
+					elseif S.focus == "staging" then
+						stg_blur()
+					end
+				end
+			end
+		end
+		reclaim(Current)
+		reclaim(Preview)
 
 		ps.sub("cd", on_cd)
 		-- Best-effort extra triggers: tab switches re-track the selection
