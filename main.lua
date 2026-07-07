@@ -114,17 +114,19 @@ function core.window(total, h, anchor)
 	return first, first + h - 1
 end
 
--- Staging-panel height: content grows one line per selected file atop a
--- single divider row, capped at floor(preview_h * ratio). Returns the total
--- panel height (incl. divider) and the visible list height. count 0 or a
--- preview too short to hold a divider + one line hides the panel (0, 0).
-function core.panel_height(count, preview_h, max_ratio)
-	if count <= 0 or preview_h < 2 then
+-- Staging-panel height: content grows one line per row atop `chrome` fixed
+-- rows (a single divider, or a blank + tab-bar header — default 1), capped at
+-- floor(preview_h * ratio). Returns the total panel height (incl. chrome) and
+-- the visible list height. count 0 or a preview too short to hold chrome + one
+-- line hides the panel (0, 0).
+function core.panel_height(count, preview_h, max_ratio, chrome)
+	chrome = chrome or 1
+	if count <= 0 or preview_h < chrome + 1 then
 		return 0, 0
 	end
-	local cap = math.max(2, math.floor(preview_h * (max_ratio or 0.5)))
-	local panel = math.min(1 + count, cap)
-	return panel, panel - 1
+	local cap = math.max(chrome + 1, math.floor(preview_h * (max_ratio or 0.5)))
+	local panel = math.min(chrome + count, cap)
+	return panel, panel - chrome
 end
 
 -- Scrollbar thumb over a track of `track_h` rows for `total` items, the
@@ -266,7 +268,7 @@ local S = {
 	viewport = {}, -- visible line number -> row (redraw writes, click reads)
 	last_scan = 0, -- os.time() of the last volume-rescan trigger
 	indicator = nil, -- saved th.indicator.current for the cursor restyle
-	stg = { cfg = nil, sel = nil, first = 1, area = nil, vp = {} },
+	stg = { cfg = nil, lane = "staged", sel = nil, first = 1, area = nil, vp = {} },
 }
 
 local PIN_ICON = "󰉋"
@@ -320,6 +322,7 @@ local function merge_cfg(opts)
 		max_ratio = st.max_ratio or 0.5,
 		reveal_on_enter = st.reveal_on_enter ~= false,
 		icon = st.icon or "󰄲",
+		clipboard_icon = st.clipboard_icon or "󰅍",
 	}
 	return cfg
 end
@@ -412,8 +415,50 @@ local function sel_count()
 	return #cx.active.selected
 end
 
+-- Row counts of both lanes: staged (per-tab selection) and clipboard (the
+-- global yank register).
+local function lane_counts()
+	return #cx.active.selected, #cx.yanked
+end
+
+-- The panel shows while EITHER lane has content.
 local function stg_visible()
-	return S.stg.cfg and S.stg.cfg.enabled and sel_count() > 0
+	if not (S.stg.cfg and S.stg.cfg.enabled) then
+		return false
+	end
+	local staged, clip = lane_counts()
+	return staged > 0 or clip > 0
+end
+
+-- Resolve the active lane, auto-switching away from an emptied lane so the
+-- visible lane always has content whenever the panel is shown.
+local function active_lane()
+	local staged, clip = lane_counts()
+	local lane = S.stg.lane or "staged"
+	if lane == "staged" and staged == 0 and clip > 0 then
+		lane = "clipboard"
+	elseif lane == "clipboard" and clip == 0 and staged > 0 then
+		lane = "staged"
+	end
+	S.stg.lane = lane
+	return lane
+end
+
+-- The active lane's paths (+ the clipboard cut flag). `selection()` above is
+-- the staged-lane reader; this dispatches on the active lane.
+local function lane_data()
+	local lane = active_lane()
+	local list = {}
+	if lane == "clipboard" then
+		for _, url in pairs(cx.yanked) do
+			list[#list + 1] = tostring(url)
+		end
+		return lane, list, cx.yanked.is_cut
+	end
+	for _, url in pairs(cx.active.selected) do
+		list[#list + 1] = tostring(url)
+	end
+	return lane, list, false
 end
 
 -- select_item: commit — move the highlight AND cd to it. Navigates even when
@@ -520,9 +565,24 @@ local function stg_blur()
 	ui.render()
 end
 
--- Move the staging cursor by delta, clamped over the current selection count.
+-- Switch the panel's active lane. Only lands on a lane that has content (an
+-- empty lane would just bounce back), and resets the cursor to the top.
+local function set_lane(name)
+	local staged, clip = lane_counts()
+	local n = name == "clipboard" and clip or staged
+	if n == 0 or S.stg.lane == name then
+		return
+	end
+	S.stg.lane = name
+	S.stg.sel = 1
+	S.stg.first = 1
+	ui.render()
+end
+
+-- Move the active-lane cursor by delta, clamped over that lane's row count.
 local function stg_move(delta)
-	local n = sel_count()
+	local _, list = lane_data()
+	local n = #list
 	if n == 0 then
 		stg_blur()
 		return
@@ -531,25 +591,30 @@ local function stg_move(delta)
 	ui.render()
 end
 
--- Remove the hovered file from the staged lane (unstage it). Removal shifts
--- the list up, so keeping the same index lands the cursor on the next file —
--- there is no visible "stay vs move" difference here (that distinction only
--- matters in the panes, where toggling leaves the file in place). Emptying the
--- lane hides the panel and hands focus back to the panes.
+-- Remove the hovered row from the active lane: un-stage it (staged lane).
+-- Clipboard-lane removal (dropping from the yank register) lands in the next
+-- increment. Removal shifts the list up, so keeping the same index lands the
+-- cursor on the next row — there is no visible "stay vs move" difference here
+-- (that distinction only matters in the panes, where toggling leaves the file
+-- in place). When the last row across both lanes goes, focus returns to panes.
 local function panel_remove()
-	local sel = selection()
-	local n = #sel
+	local lane, list = lane_data()
+	local n = #list
 	if n == 0 then
 		stg_blur()
 		return
 	end
+	if lane == "clipboard" then
+		return -- register removal arrives in increment B2
+	end
 	local i = S.stg.sel or 1
-	local url = sel[i]
+	local url = list[i]
 	if not url then
 		return
 	end
 	ya.emit("toggle_all", { url, state = "off" })
-	if n <= 1 then
+	local staged, clip = lane_counts()
+	if staged + clip - 1 <= 0 then
 		stg_blur()
 		return
 	end
@@ -581,7 +646,7 @@ local function on_cd()
 	-- Selection can empty out from a cd (leaving a folder whose files were
 	-- selected does not clear them, but a paste/delete might). If it did and
 	-- staging held focus, drop back to the panes.
-	if S.focus == "staging" and sel_count() == 0 then
+	if S.focus == "staging" and not stg_visible() then
 		S.focus = "list"
 		swap_cursor(false)
 		S.stg.sel = nil
@@ -628,9 +693,9 @@ local nav = ya.sync(function(_, act, rest)
 		-- focused: fallthrough.
 		if S.focus == "staging" then
 			if S.stg.cfg.reveal_on_enter and S.stg.sel then
-				local sel = selection()
-				if sel[S.stg.sel] then
-					ya.emit("reveal", { sel[S.stg.sel] })
+				local _, list = lane_data()
+				if list[S.stg.sel] then
+					ya.emit("reveal", { list[S.stg.sel] })
 				end
 			end
 			stg_blur()
@@ -648,13 +713,14 @@ local nav = ya.sync(function(_, act, rest)
 			ya.emit(rest[1], { table.unpack(rest, 2) })
 		end
 	elseif act == "h" then
-		-- Sidebar focused: h/Left do nothing. Staging focused: leave to the
-		-- panes. List focused: leave, except at the filesystem root, where
-		-- one more "left" focuses the sidebar.
+		-- Sidebar focused: h/Left do nothing. Staging focused: switch to the
+		-- Staged (left) lane — leaving the panel is Shift+H. List focused:
+		-- leave, except at the filesystem root, where one more "left" focuses
+		-- the sidebar.
 		if S.focus == "sidebar" then
 			return
 		elseif S.focus == "staging" then
-			stg_blur()
+			set_lane("staged")
 			return
 		end
 		if cx.active.parent then
@@ -663,10 +729,12 @@ local nav = ya.sync(function(_, act, rest)
 			focus_sidebar()
 		end
 	elseif act == "l" then
-		-- Sidebar focused: hand focus back to the file list. List focused:
-		-- stock enter.
+		-- Sidebar focused: hand focus back to the file list. Staging focused:
+		-- switch to the Clipboard (right) lane. List focused: stock enter.
 		if S.focus == "sidebar" then
 			blur_sidebar()
+		elseif S.focus == "staging" then
+			set_lane("clipboard")
 		else
 			ya.emit("enter", {})
 		end
@@ -780,72 +848,91 @@ local function render_staging(area)
 		return {}
 	end
 	local c = S.cfg.colors
-	local sel = selection()
-	local total = #sel
-	local visible_h = h - 1 -- row 1 is the divider
+	local lane, list, is_cut = lane_data()
+	local total = #list
+	local visible_h = h - 2 -- row 1 blank spacer, row 2 tab bar
 	local focused = S.focus == "staging"
 
-	-- Removals shrink the list under the cursor; clamp so the pill never points
-	-- past the end after an async un-stage.
+	-- Removals / lane switches shrink the list under the cursor; clamp so the
+	-- pill never points past the end.
 	if focused and S.stg.sel and total > 0 and S.stg.sel > total then
 		S.stg.sel = total
 	end
 
-	local first, last = core.window(total, visible_h, focused and S.stg.sel or S.stg.first)
-	S.stg.first = first
-
 	local lines, vp = {}, {}
-	-- Divider row with a compact count label.
-	local label = " " .. tostring(total) .. " staged "
-	local fill = math.max(0, w - ui.Line({ ui.Span(label) }):width() - 1)
-	lines[1] = ui.Line({
-		ui.Span("─" .. label):style(style(c.separator or "darkgray")),
-		ui.Span(string.rep("─", fill)):style(style(c.separator or "darkgray")),
-	})
-	vp[1] = nil -- divider is not selectable
+	-- Row 1: blank spacer separating the preview above from the panel.
+	lines[1] = ui.Line({})
+	vp[1] = nil
+	-- Row 2: tab bar — "── stage (N) │ <icon> clipboard (M) ─────". The active
+	-- lane's label is bold; the rule glyphs are a lighter gray; "stage" carries
+	-- Yazi's selected-marker colour, "clipboard" its yank-marker colour (the
+	-- cut colour when the register is a cut).
+	local rule = style(c.tab_rule or c.separator or "darkgray")
+	local staged_n, clip_n = lane_counts()
+	local stage_style = style(c.staged or "yellow", lane == "staged")
+	local clip_color = is_cut and (c.clipboard_cut or "red") or (c.clipboard or "green")
+	local clip_style = style(clip_color, lane == "clipboard")
+	local spans = {
+		ui.Span("── "):style(rule),
+		ui.Span("stage (" .. staged_n .. ")"):style(stage_style),
+		ui.Span(" │ "):style(rule),
+		ui.Span(S.stg.cfg.clipboard_icon .. " clipboard (" .. clip_n .. ")"):style(clip_style),
+		ui.Span(" "):style(rule),
+	}
+	local used = ui.Line(spans):width()
+	if w > used then
+		spans[#spans + 1] = ui.Span(string.rep("─", w - used)):style(rule)
+	end
+	lines[2] = ui.Line(spans)
+	vp[2] = nil
 
-	local cwd = tostring(cx.active.current.cwd)
-	local home = S.cfg.home
-	local line_i = 1
-	for i = first, last do
-		line_i = line_i + 1
-		local path = sel[i]
-		local shown = core.rel(path, cwd, home)
-		local text = S.stg.cfg.icon .. " " .. shown
-		local ln
-		if focused and i == S.stg.sel then
-			local body, cap = sel_pill(true)
-			if cap then
-				local open, close = pill_caps()
-				local label2 = core.truncate(text, math.max(1, w - 4))
-				local pad = math.max(0, w - 4 - ui.Line({ ui.Span(label2) }):width())
-				ln = ui.Line({
-					ui.Span(" "),
-					ui.Span(open):style(cap),
-					ui.Span(label2 .. string.rep(" ", pad)):style(body),
-					ui.Span(close):style(cap),
-				})
-				ln:truncate({ max = w })
+	if total > 0 and visible_h >= 1 then
+		local first, last = core.window(total, visible_h, focused and S.stg.sel or S.stg.first)
+		S.stg.first = first
+		local cwd = tostring(cx.active.current.cwd)
+		local home = S.cfg.home
+		local icon = lane == "clipboard" and S.stg.cfg.clipboard_icon or S.stg.cfg.icon
+		local line_i = 2
+		for i = first, last do
+			line_i = line_i + 1
+			local shown = core.rel(list[i], cwd, home)
+			local text = icon .. " " .. shown
+			local ln
+			if focused and i == S.stg.sel then
+				local body, cap = sel_pill(true)
+				if cap then
+					local open, close = pill_caps()
+					local label2 = core.truncate(text, math.max(1, w - 4))
+					local pad = math.max(0, w - 4 - ui.Line({ ui.Span(label2) }):width())
+					ln = ui.Line({
+						ui.Span(" "),
+						ui.Span(open):style(cap),
+						ui.Span(label2 .. string.rep(" ", pad)):style(body),
+						ui.Span(close):style(cap),
+					})
+					ln:truncate({ max = w })
+				else
+					ln = ui.Line({ ui.Span("  " .. core.truncate(text, math.max(1, w - 3))):style(body) })
+				end
 			else
-				ln = ui.Line({ ui.Span("  " .. core.truncate(text, math.max(1, w - 3))):style(body) })
+				ln = ui.Line({ ui.Span("  " .. core.truncate(text, math.max(1, w - 3))):style(style(c.item)) })
 			end
-		else
-			ln = ui.Line({ ui.Span("  " .. core.truncate(text, math.max(1, w - 3))):style(style(c.item)) })
+			lines[line_i] = ln
+			vp[line_i] = i
 		end
-		lines[line_i] = ln
-		vp[line_i] = i
+
+		local bar = core.scrollbar(total, visible_h, first)
+		if bar then
+			S.stg.vp = vp
+			local out = { ui.List(lines):area(area) }
+			local track = ui.Rect({ x = area.x + w - 1, y = area.y + 2 + bar.y, w = 1, h = bar.len })
+			out[#out + 1] = ui.Bar(ui.Edge.RIGHT):area(track):symbol("█"):style(style(c.separator or "darkgray"))
+			return out
+		end
 	end
+
 	S.stg.vp = vp
-
-	local out = { ui.List(lines):area(area) }
-
-	-- Right-edge scrollbar thumb over the list track (below the divider).
-	local bar = core.scrollbar(total, visible_h, first)
-	if bar then
-		local track = ui.Rect({ x = area.x + w - 1, y = area.y + 1 + bar.y, w = 1, h = bar.len })
-		out[#out + 1] = ui.Bar(ui.Edge.RIGHT):area(track):symbol("█"):style(style(c.separator or "darkgray"))
-	end
-	return out
+	return { ui.List(lines):area(area) }
 end
 
 -- Staging component: a first-class child so Yazi hit-tests mouse over its
@@ -867,6 +954,11 @@ function Staging:click(event, up)
 	end
 	stg_focus()
 	local line = event.y - self._area.y + 1
+	if line == 2 then
+		-- Tab bar: click the left half for Staged, the right half for Clipboard.
+		set_lane(event.x - self._area.x < math.floor(self._area.w / 2) and "staged" or "clipboard")
+		return
+	end
 	local idx = S.stg.vp[line]
 	if idx then
 		S.stg.sel = idx
@@ -875,8 +967,9 @@ function Staging:click(event, up)
 end
 
 function Staging:scroll(event, step)
-	-- Wheel scrolls the list regardless of focus; clamp over the selection.
-	local n = sel_count()
+	-- Wheel scrolls the active lane's list regardless of focus.
+	local _, list = lane_data()
+	local n = #list
 	if n == 0 then
 		return
 	end
@@ -935,7 +1028,10 @@ function M:setup(opts)
 				return -- preset drift: bail rather than mis-carve
 			end
 			local a = prev._area
-			local panel_h = select(1, core.panel_height(sel_count(), a.h, S.stg.cfg.max_ratio))
+			-- Size to the ACTIVE lane's rows atop the 2-row header (blank +
+			-- tab bar); auto-switch keeps the active lane non-empty here.
+			local _, list = lane_data()
+			local panel_h = select(1, core.panel_height(#list, a.h, S.stg.cfg.max_ratio, 2))
 			if panel_h <= 0 then
 				return
 			end
