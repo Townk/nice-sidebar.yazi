@@ -402,18 +402,8 @@ end
 
 -- ------------------------------------------------------- selection/focus --
 -- The active tab's selected paths, insertion order (Yazi's selection is a
--- per-tab ordered set). Runs in the sync VM (redraw / nav).
-local function selection()
-	local out = {}
-	for _, url in pairs(cx.active.selected) do
-		out[#out + 1] = tostring(url)
-	end
-	return out
-end
-
-local function sel_count()
-	return #cx.active.selected
-end
+-- per-tab ordered set) and the global yank register (`cx.yanked`). All run in
+-- the sync VM (redraw / nav).
 
 -- Row counts of both lanes: staged (per-tab selection) and clipboard (the
 -- global yank register).
@@ -444,8 +434,8 @@ local function active_lane()
 	return lane
 end
 
--- The active lane's paths (+ the clipboard cut flag). `selection()` above is
--- the staged-lane reader; this dispatches on the active lane.
+-- The active lane's paths (+ the clipboard cut flag), dispatched on the
+-- active lane.
 local function lane_data()
 	local lane = active_lane()
 	local list = {}
@@ -592,11 +582,12 @@ local function stg_move(delta)
 end
 
 -- Remove the hovered row from the active lane: un-stage it (staged lane).
--- Clipboard-lane removal (dropping from the yank register) lands in the next
--- increment. Removal shifts the list up, so keeping the same index lands the
--- cursor on the next row — there is no visible "stay vs move" difference here
--- (that distinction only matters in the panes, where toggling leaves the file
--- in place). When the last row across both lanes goes, focus returns to panes.
+-- Clipboard-lane removal is not possible (the yank register is read-only to
+-- plugins — view-only by design). Removal shifts the list up, so keeping the
+-- same index lands the cursor on the next row — there is no visible "stay vs
+-- move" difference here (that distinction only matters in the panes, where
+-- toggling leaves the file in place). When the last row across both lanes goes,
+-- focus returns to panes.
 local function panel_remove()
 	local lane, list = lane_data()
 	local n = #list
@@ -622,7 +613,7 @@ local function panel_remove()
 		stg_blur()
 		return
 	end
-	S.stg.sel = math.min(i, n - 1)
+	S.stg.sel = math.max(1, math.min(i, n - 1))
 	ui.render()
 end
 
@@ -661,9 +652,17 @@ end
 -- --------------------------------------------------------------- bridges --
 -- Executed in the sync VM regardless of the calling context; registered at
 -- the top level so both VMs agree on the registration index.
-local nav = ya.sync(function(_, act, rest)
+local nav = ya.sync(function(_, act)
 	if not S.cfg then
 		return
+	end
+	-- Re-assert the invariant: a paste/delete can empty both lanes without a cd,
+	-- leaving focus stranded on a now-hidden panel (file cursor still dimmed).
+	-- Any plugin key corrects it here.
+	if S.focus == "staging" and not stg_visible() then
+		S.focus = "list"
+		swap_cursor(false)
+		S.stg.sel = nil
 	end
 	if act == "next" or act == "prev" then
 		-- Focus-scoped. From the file list: cd immediately to the next/prev
@@ -675,18 +674,6 @@ local nav = ya.sync(function(_, act, rest)
 			move(delta)
 		else
 			select_item(core.step(S.selected, delta, #S.items))
-		end
-	elseif act == "focus" then
-		focus_sidebar()
-	elseif act == "blur" then
-		-- Sidebar focused: hand focus back to the file list. List focused:
-		-- run the fallthrough command given as the remaining keymap args
-		-- (e.g. "plugin nice-sidebar blur plugin bypass" keeps L's stock
-		-- bypass behavior), or do nothing.
-		if S.focus == "sidebar" then
-			blur_sidebar()
-		elseif rest and rest[1] then
-			ya.emit(rest[1], { table.unpack(rest, 2) })
 		end
 	elseif act == "enter" then
 		-- Staging focused: reveal the cursor file (if configured) and hand
@@ -867,10 +854,10 @@ local publish = ya.sync(function(_, sections)
 	ui.render()
 end)
 
--- Render the staging panel into `area`: a divider row, then the visible slice
--- of the selection with a focused cursor pill, plus a right-edge scrollbar when
--- the list overflows. Writes S.stg.vp (visible line -> selection index) and
--- S.stg.first for click/scroll hit-testing.
+-- Render the staging panel into `area`: a 2-row header (blank indicator row +
+-- the tab bar), then the visible slice of the active lane with a focused cursor
+-- pill, plus a right-edge scrollbar when the list overflows. Writes S.stg.vp
+-- (visible line -> lane index) and S.stg.first for click/scroll hit-testing.
 local function render_staging(area)
 	local w, h = area.w, area.h
 	if w == 0 or h < 2 then
@@ -949,7 +936,16 @@ local function render_staging(area)
 	vp[1] = nil
 
 	if total > 0 and visible_h >= 1 then
-		local first, last = core.window(total, visible_h, focused and S.stg.sel or S.stg.first)
+		-- Focused: window centres on the cursor. Unfocused: `S.stg.first` is a
+		-- literal top-of-window (wheel scroll), so clamp it directly rather than
+		-- feed it to core.window, which would re-centre it.
+		local first, last
+		if focused then
+			first, last = core.window(total, visible_h, S.stg.sel)
+		else
+			first = math.max(1, math.min(S.stg.first or 1, math.max(1, total - visible_h + 1)))
+			last = math.min(total, first + visible_h - 1)
+		end
 		S.stg.first = first
 		local cwd = tostring(cx.active.current.cwd)
 		local home = S.cfg.home
@@ -1088,27 +1084,29 @@ function M:setup(opts)
 		local orig_build = Tab.build
 		function Tab:build()
 			orig_build(self)
-			S.stg.area = nil
-			if not stg_visible() then
-				return
-			end
-			local prev = self._children[3]
-			if not prev or prev._id ~= "preview" then
-				return -- preset drift: bail rather than mis-carve
-			end
-			local a = prev._area
-			-- Size to the ACTIVE lane's rows atop the 2-row header (blank +
-			-- tab bar); auto-switch keeps the active lane non-empty here.
-			local _, list = lane_data()
-			local panel_h = select(1, core.panel_height(#list, a.h, S.stg.cfg.max_ratio, 2))
-			if panel_h <= 0 then
-				return
-			end
-			local top = ui.Rect({ x = a.x, y = a.y, w = a.w, h = a.h - panel_h })
-			local bot = ui.Rect({ x = a.x, y = a.y + a.h - panel_h, w = a.w, h = panel_h })
-			prev._area = top
-			S.stg.area = bot
-			self._children[#self._children + 1] = Staging:new(bot, self._tab)
+			-- Carve inside a pcall: runs outside the setup pcall and touches the
+			-- yank register / selection, so a throw degrades to the stock preview.
+			pcall(function()
+				if not stg_visible() then
+					return
+				end
+				local prev = self._children[3]
+				if not prev or prev._id ~= "preview" then
+					return -- preset drift: bail rather than mis-carve
+				end
+				local a = prev._area
+				-- Size to the ACTIVE lane's rows atop the 2-row header (blank +
+				-- tab bar); auto-switch keeps the active lane non-empty here.
+				local _, list = lane_data()
+				local panel_h = select(1, core.panel_height(#list, a.h, S.stg.cfg.max_ratio, 2))
+				if panel_h <= 0 then
+					return
+				end
+				local top = ui.Rect({ x = a.x, y = a.y, w = a.w, h = a.h - panel_h })
+				local bot = ui.Rect({ x = a.x, y = a.y + a.h - panel_h, w = a.w, h = panel_h })
+				prev._area = top
+				self._children[#self._children + 1] = Staging:new(bot, self._tab)
+			end)
 		end
 
 		-- The sidebar owns the column: the parent listing never renders.
@@ -1401,19 +1399,15 @@ end
 -- Runs in the async context. Keymap args are POSITIONAL
 -- ("plugin nice-sidebar prev") — yazi 26.5 silently drops `--args=` forms.
 function M:entry(job)
+	-- Yazi 26.5 passes a plugin only its first positional arg, so every act is
+	-- a single token; there are no trailing args to collect.
 	local act = job.args and job.args[1]
 	if act == "refresh" then
 		refresh()
 	elseif act == "pin" then
 		pin()
 	elseif act then
-		-- job.args may not be a plain table (no table.unpack): collect the
-		-- trailing positionals by index.
-		local rest, i = {}, 2
-		while job.args[i] ~= nil do
-			rest[i - 1], i = job.args[i], i + 1
-		end
-		nav(act, rest)
+		nav(act)
 	end
 end
 
