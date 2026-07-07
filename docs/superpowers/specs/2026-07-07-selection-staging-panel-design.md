@@ -58,6 +58,17 @@ The panel touches the two things nice-sidebar already owns exclusively:
   component).
 - **Region** — one of the three focusable areas: `sidebar`, `panes`, `staging`.
 
+### Selection is per-tab (not global)
+
+Confirmed against Yazi's data model (`yazi_actor::lives::*`): the `<Space>`
+**selection** is a per-tab set — there is no global "selected" surface, only the
+active tab's (`cx.active.selected`), and the top-right counter reflects that tab's
+selection. Switching tabs swaps the selection and therefore the panel's contents.
+(The **yank/cut register**, by contrast, *is* global — `cx.yanked` — which is why
+paste crosses tabs; that register is out of scope for v1, see Non-goals.) The
+panel is thus inherently **tab-scoped**: it always mirrors the active tab, and
+re-renders on tab switch like every other tab-scoped component.
+
 ## Architecture overview
 
 Three changes, all inside `main.lua`:
