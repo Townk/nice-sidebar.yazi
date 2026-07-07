@@ -366,11 +366,24 @@ keymap). Both route through the plugin so focus decides their target.
 
 | Key | Panes/sidebar focused | Staged tab focused | Clipboard tab focused |
 |-----|-----------------------|--------------------|-----------------------|
-| `Space` | toggle the center-hovered file's selection, **cursor stays** | **unstage** the hovered file (`toggle_all { url, state="off" }`), cursor stays | **remove** the hovered file from the register (`update_yanked`), cursor stays |
-| `Shift+Space` | toggle the center-hovered file, **move to next** | unstage hovered, **move cursor to next** | remove hovered, **move cursor to next** |
+| `Space` | toggle the center-hovered file's selection, **cursor stays** | **unstage** the hovered file (`toggle_all { url, state="off" }`), cursor stays | **no-op** (view-only, see below) |
+| `Shift+Space` (`Alt+Space`) | toggle the center-hovered file, **move to next** | unstage hovered, **move cursor to next** | **no-op** |
 | `y` / `x` | `yank` / `yank --cut` — **all staged files** (Yazi default) | same (unchanged) | same |
 | `Enter` | (Yazi default) | **reveal** hovered → focus panes | **reveal** hovered → focus panes |
 | `p` / `P` | `paste` (Yazi default) | paste (default) | paste (default) |
+| `Alt+s` / `Alt+c` | jump to Staged / Clipboard lane (focus panel) | same | same |
+
+Lane switch while focused: `h`/`l` (Staged ↔ Clipboard) or the global `Alt+s`/`Alt+c`; leaving the panel is `Shift+H`.
+
+### Clipboard lane is view-only
+
+Yazi exposes the yank register **read-only** to plugins. It can only be written
+by `yank`/`yank --cut` (from the current selection), cleared wholesale by
+`unyank`, or set from a native `EmberYank` object — which has **no Lua
+constructor** (`UpdateYankedForm::from_lua` is `unsupported`; `update_yanked`
+extracts an existing `EmberYank` via `take_any(0)`). A plugin therefore cannot
+remove a single entry. The Clipboard lane is **view + `Enter`-reveal** only;
+`Space` is a deliberate no-op there.
 
 ### Individual-file operations: unsupported (no-op)
 
@@ -387,10 +400,15 @@ per-row — this is Yazi's native behaviour and is preserved as-is.
 
 - **Unstage one file:** `ya.emit("toggle_all", { url, state = "off" })` — works
   across directories.
-- **Remove one clipboard entry:** re-emit `update_yanked` with the register minus
-  that URL (register read from `cx.yanked`, which exposes the cut/copy flag).
-  Exact payload shape verified at implementation.
+- **Read the clipboard:** `cx.yanked` (iterate via `pairs`, `#` count,
+  `.is_cut` flag). Removal is **not possible** (see "Clipboard lane is
+  view-only").
 - **Reveal:** `ya.emit("reveal", { url })` (cd to its folder + hover it).
+- **Keymap args:** Yazi 26.5 drops trailing positional plugin args, so
+  multi-word acts (`plugin nice-sidebar lane staged`) lose the tail. Lane
+  switches use single-token acts (`lane_staged` / `lane_clipboard`). Any
+  fallthrough-carrying rows (`Shift+L`→`bypass`, `G`/`gg` guards) must be
+  audited for the same issue.
 
 ### Non-goals (still)
 

@@ -321,7 +321,7 @@ local function merge_cfg(opts)
 		enabled = st.enabled ~= false,
 		max_ratio = st.max_ratio or 0.5,
 		reveal_on_enter = st.reveal_on_enter ~= false,
-		icon = st.icon or "󰄲",
+		icon = st.icon or "\239\128\156", -- U+F01C (nf-fa-inbox), UTF-8 bytes
 		clipboard_icon = st.clipboard_icon or "󰅍",
 	}
 	return cfg
@@ -605,7 +605,11 @@ local function panel_remove()
 		return
 	end
 	if lane == "clipboard" then
-		return -- register removal arrives in increment B2
+		-- View-only: Yazi exposes the yank register read-only. It can only be
+		-- cleared wholesale (unyank) or set from a native EmberYank (no Lua
+		-- constructor), so a single clipboard entry cannot be removed. Space is
+		-- a deliberate no-op here; Enter still reveals.
+		return
 	end
 	local i = S.stg.sel or 1
 	local url = list[i]
@@ -770,13 +774,11 @@ local nav = ya.sync(function(_, act, rest)
 				ya.emit("arrow", { 1 })
 			end
 		end
-	elseif act == "lane" then
+	elseif act == "lane_staged" or act == "lane_clipboard" then
 		-- Alt+s / Alt+c: jump straight to a lane — focus the panel and switch
-		-- to it (a no-op when that lane is empty).
-		local name = rest and rest[1]
-		if name ~= "staged" and name ~= "clipboard" then
-			return
-		end
+		-- to it (a no-op when that lane is empty). Single-token acts because
+		-- Yazi 26.5 drops trailing positional plugin args.
+		local name = act == "lane_clipboard" and "clipboard" or "staged"
 		local staged, clip = lane_counts()
 		if (name == "clipboard" and clip or staged) == 0 then
 			return
@@ -879,40 +881,44 @@ local function render_staging(area)
 	end
 
 	local lines, vp = {}, {}
-	-- Row 1: blank spacer separating the preview above from the panel.
-	lines[1] = ui.Line({})
-	vp[1] = nil
-	-- Row 2: tab bar — "── stage (N) │ <icon> clipboard (M) ─────". The active
-	-- lane's label is bold; the rule glyphs are a lighter gray; "stage" carries
-	-- Yazi's selected-marker colour, "clipboard" its yank-marker colour (the
-	-- cut colour when the register is a cut).
 	local rule = style(c.tab_rule or c.separator or "darkgray")
 	local staged_n, clip_n = lane_counts()
-	local lead, mid, trail = "── ", " │ ", " "
-	-- Only lanes with content get a label; the empty lane is hidden.
-	local segs = {}
-	if staged_n > 0 then
-		segs[#segs + 1] = { "stage (" .. staged_n .. ")", style(c.staged or "yellow", lane == "staged") }
-	end
-	if clip_n > 0 then
-		local clip_color = is_cut and (c.clipboard_cut or "red") or (c.clipboard or "green")
-		segs[#segs + 1] =
-			{ S.stg.cfg.clipboard_icon .. " clipboard (" .. clip_n .. ")", style(clip_color, lane == "clipboard") }
-	end
+	local lead, mid, trail = "─ ", " | ", " "
 	-- Measure with throwaway spans: ui.Line consumes the Span userdata, so the
-	-- real spans below must be built exactly once, not reused for a width probe.
+	-- real spans must be built exactly once, not reused for a width probe.
 	local function tw(s)
 		return ui.Line({ ui.Span(s) }):width()
 	end
+	-- Only lanes with content get a label; the empty lane is hidden. Each seg is
+	-- { text, colour, active }. "stage" carries Yazi's selected-marker colour,
+	-- "clipboard" its yank-marker colour (the cut colour when it is a cut).
+	local segs = {}
+	if staged_n > 0 then
+		segs[#segs + 1] = { S.stg.cfg.icon .. " stage (" .. staged_n .. ")", c.staged or "yellow", lane == "staged" }
+	end
+	if clip_n > 0 then
+		local clip_color = is_cut and (c.clipboard_cut or "red") or (c.clipboard or "green")
+		segs[#segs + 1] = { S.stg.cfg.clipboard_icon .. " clipboard (" .. clip_n .. ")", clip_color, lane == "clipboard" }
+	end
+	-- Row 2: the tab bar. Track the active seg's column offset + width so row 1
+	-- can draw a ▁ underline bar exactly beneath it (the active-lane indicator).
 	local spans = { ui.Span(lead):style(rule) }
+	local x = tw(lead)
 	local used = tw(lead) + tw(trail)
+	local ind_x, ind_w, ind_color
 	for i, seg in ipairs(segs) do
 		if i > 1 then
 			spans[#spans + 1] = ui.Span(mid):style(rule)
+			x = x + tw(mid)
 			used = used + tw(mid)
 		end
-		spans[#spans + 1] = ui.Span(seg[1]):style(seg[2])
-		used = used + tw(seg[1])
+		local sw = tw(seg[1])
+		spans[#spans + 1] = ui.Span(seg[1]):style(style(seg[2]))
+		if seg[3] then
+			ind_x, ind_w, ind_color = x, sw, seg[2]
+		end
+		x = x + sw
+		used = used + sw
 	end
 	spans[#spans + 1] = ui.Span(trail):style(rule)
 	if w > used then
@@ -920,6 +926,18 @@ local function render_staging(area)
 	end
 	lines[2] = ui.Line(spans)
 	vp[2] = nil
+	-- Row 1: the ▁ indicator bar beneath the active tab (in its colour), else blank.
+	if ind_x and ind_w and ind_w > 0 then
+		local iparts = {}
+		if ind_x > 0 then
+			iparts[#iparts + 1] = ui.Span(string.rep(" ", ind_x))
+		end
+		iparts[#iparts + 1] = ui.Span(string.rep("▁", ind_w)):style(style(ind_color))
+		lines[1] = ui.Line(iparts)
+	else
+		lines[1] = ui.Line({})
+	end
+	vp[1] = nil
 
 	if total > 0 and visible_h >= 1 then
 		local first, last = core.window(total, visible_h, focused and S.stg.sel or S.stg.first)
