@@ -645,9 +645,9 @@ local publish = ya.sync(function(_, sections)
 end)
 
 -- Render the staging panel into `area`: a divider row, then the visible slice
--- of the selection with a focused cursor pill, plus a right-edge scrollbar and
--- ⋮ overflow markers when the list is clipped. Writes S.stg.vp (visible line ->
--- selection index) and S.stg.first for click/scroll hit-testing.
+-- of the selection with a focused cursor pill, plus a right-edge scrollbar when
+-- the list overflows. Writes S.stg.vp (visible line -> selection index) and
+-- S.stg.first for click/scroll hit-testing.
 local function render_staging(area)
 	local w, h = area.w, area.h
 	if w == 0 or h < 2 then
