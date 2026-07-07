@@ -262,10 +262,11 @@ local S = {
 	rows = {}, -- render rows (core.build)
 	items = {}, -- ordered selectable items
 	selected = nil, -- item index, nil = nothing selected
-	focus = "list", -- "list" | "sidebar"
+	focus = "list", -- "list" | "sidebar" | "staging"
 	viewport = {}, -- visible line number -> row (redraw writes, click reads)
 	last_scan = 0, -- os.time() of the last volume-rescan trigger
 	indicator = nil, -- saved th.indicator.current for the cursor restyle
+	stg = { cfg = nil, sel = nil, first = 1, area = nil, vp = {} },
 }
 
 local PIN_ICON = "󰉋"
@@ -313,6 +314,13 @@ local function merge_cfg(opts)
 	for _, d in ipairs(opts.dirs or DEFAULTS.dirs) do
 		cfg.dirs[#cfg.dirs + 1] = { label = d.label, path = core.expand(d.path, home), icon = d.icon }
 	end
+	local st = opts.staging or {}
+	cfg.staging = {
+		enabled = st.enabled ~= false,
+		max_ratio = st.max_ratio or 0.5,
+		reveal_on_enter = st.reveal_on_enter ~= false,
+		icon = st.icon or "󰄲",
+	}
 	return cfg
 end
 
@@ -390,6 +398,24 @@ local function swap_cursor(on)
 end
 
 -- ------------------------------------------------------- selection/focus --
+-- The active tab's selected paths, insertion order (Yazi's selection is a
+-- per-tab ordered set). Runs in the sync VM (redraw / nav).
+local function selection()
+	local out = {}
+	for _, url in pairs(cx.active.selected) do
+		out[#out + 1] = tostring(url)
+	end
+	return out
+end
+
+local function sel_count()
+	return #cx.active.selected
+end
+
+local function stg_visible()
+	return S.stg.cfg and S.stg.cfg.enabled and sel_count() > 0
+end
+
 -- select_item: commit — move the highlight AND cd to it. Navigates even when
 -- the index is unchanged (clicking Documents while deep inside it returns you
 -- to ~/Documents, like Finder).
@@ -621,6 +647,7 @@ end)
 -- ----------------------------------------------------------------- setup --
 function M:setup(opts)
 	S.cfg = merge_cfg(opts)
+	S.stg.cfg = S.cfg.staging
 	-- First paint: configured dirs as-is. The async refresh (Task 6) then
 	-- replaces the sections with existence-filtered dirs, pins, and disks.
 	S.rows, S.items = core.build({ dirs = S.cfg.dirs, pins = {}, disks = {} })
