@@ -277,6 +277,26 @@ t("volume_name: missing or inapplicable yields nil", function()
 	eq(core.volume_name("   Volume Name:               Not applicable (no file system)\n"), nil)
 end)
 
+-- rel -----------------------------------------------------------------------
+t("rel: a child of cwd is shown relative", function()
+	eq(core.rel("/Users/u/proj/a.txt", "/Users/u/proj", "/Users/u"), "a.txt")
+end)
+t("rel: a deeper descendant keeps its subpath", function()
+	eq(core.rel("/Users/u/proj/src/a.txt", "/Users/u/proj", "/Users/u"), "src/a.txt")
+end)
+t("rel: outside cwd falls back to tilde-abbrev", function()
+	eq(core.rel("/Users/u/other/a.txt", "/Users/u/proj", "/Users/u"), "~/other/a.txt")
+end)
+t("rel: outside home stays absolute", function()
+	eq(core.rel("/Volumes/X/a.txt", "/Users/u/proj", "/Users/u"), "/Volumes/X/a.txt")
+end)
+t("rel: sibling prefix is not treated as a child", function()
+	eq(core.rel("/Users/u/project2/a", "/Users/u/proj", "/Users/u"), "~/project2/a")
+end)
+t("rel: under root cwd drops the leading slash", function()
+	eq(core.rel("/etc/hosts", "/", "/Users/u"), "etc/hosts")
+end)
+
 -- parse_mounts ---------------------------------------------------------------
 local MOUNT_OUTPUT = table.concat({
 	"/dev/disk3s1s1 on / (apfs, sealed, local, read-only, journaled)",

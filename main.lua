@@ -34,6 +34,19 @@ function core.abbrev(path, home)
 	return path
 end
 
+-- Display path for a staging row: relative to cwd when path is strictly
+-- under it, else "~"-abbreviated. cwd carries no trailing slash.
+function core.rel(path, cwd, home)
+	if cwd == "/" then
+		if path:sub(1, 1) == "/" then
+			return path:sub(2)
+		end
+	elseif cwd and path:sub(1, #cwd + 1) == cwd .. "/" then
+		return path:sub(#cwd + 2)
+	end
+	return core.abbrev(path, home)
+end
+
 -- UTF-8-aware truncation to `max` characters, "…" marks the clip. Manual
 -- byte-pattern iteration: the utf8 stdlib is absent under LuaJIT (nvim -l).
 function core.truncate(s, max)
