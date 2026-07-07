@@ -706,15 +706,24 @@ local nav = ya.sync(function(_, act, rest)
 		elseif S.focus == "sidebar" then
 			select_item(S.selected)
 			blur_sidebar()
-		elseif rest and rest[1] then
-			ya.emit(rest[1], { table.unpack(rest, 2) })
+		else
+			-- List focused: smart-enter. Done directly rather than via a keymap
+			-- fallthrough (Yazi 26.5 passes plugins only ONE positional arg, so
+			-- the bypass `smart_enter` arg is unreliable): OPEN files, and
+			-- recursive-enter directories via bypass (skip single-child).
+			local h = cx.active.current.hovered
+			if h and h.cha.is_dir then
+				ya.emit("plugin", { "bypass" })
+			else
+				ya.emit("open", { hovered = true })
+			end
 		end
-	elseif act == "guard" then
-		-- Generic list-navigation suppressor: swallow the key while the
-		-- sidebar or staging panel holds focus, run the fallthrough
-		-- otherwise (e.g. "plugin nice-sidebar guard arrow bot" wraps G).
-		if S.focus == "list" and rest and rest[1] then
-			ya.emit(rest[1], { table.unpack(rest, 2) })
+	elseif act == "guard_bot" or act == "guard_top" then
+		-- Suppress G / gg while the sidebar or panel owns focus; otherwise jump
+		-- the file list. Single-token acts (see the enter note) so the
+		-- arrow target survives Yazi 26.5's one-arg limit.
+		if S.focus == "list" then
+			ya.emit("arrow", { act == "guard_bot" and "bot" or "top" })
 		end
 	elseif act == "h" then
 		-- Sidebar focused: h/Left do nothing. Staging focused: switch to the
@@ -757,8 +766,8 @@ local nav = ya.sync(function(_, act, rest)
 		elseif S.focus == "list" then
 			if stg_visible() then
 				stg_focus()
-			elseif rest and rest[1] then
-				ya.emit(rest[1], { table.unpack(rest, 2) })
+			else
+				ya.emit("plugin", { "bypass" }) -- nothing staged: preserve L's bypass
 			end
 		end
 	elseif act == "space" or act == "sspace" then
