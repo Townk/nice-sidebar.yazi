@@ -644,6 +644,96 @@ local publish = ya.sync(function(_, sections)
 	ui.render()
 end)
 
+-- Render the staging panel into `area`: a divider row, then the visible slice
+-- of the selection with a focused cursor pill, plus a right-edge scrollbar and
+-- ⋮ overflow markers when the list is clipped. Writes S.stg.vp (visible line ->
+-- selection index) and S.stg.first for click/scroll hit-testing.
+local function render_staging(area)
+	local w, h = area.w, area.h
+	if w == 0 or h < 2 then
+		S.stg.vp = {}
+		return {}
+	end
+	local c = S.cfg.colors
+	local sel = selection()
+	local total = #sel
+	local visible_h = h - 1 -- row 1 is the divider
+	local focused = S.focus == "staging"
+
+	local first, last = core.window(total, visible_h, focused and S.stg.sel or S.stg.first)
+	S.stg.first = first
+
+	local lines, vp = {}, {}
+	-- Divider row with a compact count label.
+	local label = " " .. tostring(total) .. " staged "
+	local fill = math.max(0, w - ui.Line({ ui.Span(label) }):width() - 1)
+	lines[1] = ui.Line({
+		ui.Span("─" .. label):style(style(c.separator or "darkgray")),
+		ui.Span(string.rep("─", fill)):style(style(c.separator or "darkgray")),
+	})
+	vp[1] = nil -- divider is not selectable
+
+	local cwd = tostring(cx.active.current.cwd)
+	local home = S.cfg.home
+	local line_i = 1
+	for i = first, last do
+		line_i = line_i + 1
+		local path = sel[i]
+		local shown = core.rel(path, cwd, home)
+		local text = S.stg.cfg.icon .. " " .. shown
+		local ln
+		if focused and i == S.stg.sel then
+			local body, cap = sel_pill(true)
+			if cap then
+				local open, close = pill_caps()
+				local label2 = core.truncate(text, math.max(1, w - 4))
+				local pad = math.max(0, w - 4 - ui.Line({ ui.Span(label2) }):width())
+				ln = ui.Line({
+					ui.Span(" "),
+					ui.Span(open):style(cap),
+					ui.Span(label2 .. string.rep(" ", pad)):style(body),
+					ui.Span(close):style(cap),
+				})
+				ln:truncate({ max = w })
+			else
+				ln = ui.Line({ ui.Span("  " .. core.truncate(text, math.max(1, w - 3))):style(body) })
+			end
+		else
+			ln = ui.Line({ ui.Span("  " .. core.truncate(text, math.max(1, w - 3))):style(style(c.item)) })
+		end
+		lines[line_i] = ln
+		vp[line_i] = i
+	end
+	S.stg.vp = vp
+
+	local out = { ui.List(lines):area(area) }
+
+	-- Right-edge scrollbar thumb over the list track (below the divider).
+	local bar = core.scrollbar(total, visible_h, first)
+	if bar then
+		local track = ui.Rect({ x = area.x + w - 1, y = area.y + 1 + bar.y, w = 1, h = bar.len })
+		out[#out + 1] = ui.Bar(ui.Edge.RIGHT):area(track):symbol("█"):style(style(c.separator or "darkgray"))
+	end
+	return out
+end
+
+-- Staging component: a first-class child so Yazi hit-tests mouse over its
+-- area. Rendering and event bodies live in module-scope helpers.
+Staging = { _id = "staging" }
+function Staging:new(area, tab)
+	return setmetatable({ _area = area, _tab = tab }, { __index = self })
+end
+function Staging:reflow()
+	return { self }
+end
+function Staging:redraw()
+	return render_staging(self._area)
+end
+function Staging:touch(event, step) end
+-- click/scroll bodies are added in Task 7.
+function Staging:click(event, up) end
+function Staging:scroll(event, step) end
+
 -- ----------------------------------------------------------------- setup --
 function M:setup(opts)
 	S.cfg = merge_cfg(opts)
@@ -672,6 +762,34 @@ function M:setup(opts)
 					ui.Constraint.Ratio(pre, cur + pre),
 				})
 				:split(self._area)
+		end
+
+		-- Carve the staging panel out of the bottom of the preview child.
+		-- Preview is children[3] in the preset build order (Parent, Current,
+		-- Preview, Rails, Markers). Shrinking Preview._area shrinks both the
+		-- drawn preview (LAYOUT.preview) and its mouse hit-test rect; the
+		-- Staging child then owns the freed bottom slice.
+		local orig_build = Tab.build
+		function Tab:build()
+			orig_build(self)
+			S.stg.area = nil
+			if not stg_visible() then
+				return
+			end
+			local prev = self._children[3]
+			if not prev or prev._id ~= "preview" then
+				return -- preset drift: bail rather than mis-carve
+			end
+			local a = prev._area
+			local panel_h = select(1, core.panel_height(sel_count(), a.h, S.stg.cfg.max_ratio))
+			if panel_h <= 0 then
+				return
+			end
+			local top = ui.Rect({ x = a.x, y = a.y, w = a.w, h = a.h - panel_h })
+			local bot = ui.Rect({ x = a.x, y = a.y + a.h - panel_h, w = a.w, h = panel_h })
+			prev._area = top
+			S.stg.area = bot
+			self._children[#self._children + 1] = Staging:new(bot, self._tab)
 		end
 
 		-- The sidebar owns the column: the parent listing never renders.
