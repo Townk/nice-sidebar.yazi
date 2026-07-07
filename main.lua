@@ -531,6 +531,32 @@ local function stg_move(delta)
 	ui.render()
 end
 
+-- Remove the hovered file from the staged lane (unstage it). Removal shifts
+-- the list up, so keeping the same index lands the cursor on the next file —
+-- there is no visible "stay vs move" difference here (that distinction only
+-- matters in the panes, where toggling leaves the file in place). Emptying the
+-- lane hides the panel and hands focus back to the panes.
+local function panel_remove()
+	local sel = selection()
+	local n = #sel
+	if n == 0 then
+		stg_blur()
+		return
+	end
+	local i = S.stg.sel or 1
+	local url = sel[i]
+	if not url then
+		return
+	end
+	ya.emit("toggle_all", { url, state = "off" })
+	if n <= 1 then
+		stg_blur()
+		return
+	end
+	S.stg.sel = math.min(i, n - 1)
+	ui.render()
+end
+
 -- ------------------------------------------------------------- cd events --
 local function on_cd()
 	local cwd = tostring(cx.active.current.cwd)
@@ -663,6 +689,19 @@ local nav = ya.sync(function(_, act, rest)
 				ya.emit(rest[1], { table.unpack(rest, 2) })
 			end
 		end
+	elseif act == "space" or act == "sspace" then
+		-- Panel focused: un-stage the hovered file. Panes/sidebar: toggle the
+		-- center-hovered file's selection; `space` keeps the cursor put,
+		-- `sspace` (Shift+Space) advances it — the inverse of Yazi's default
+		-- `<Space>` = [toggle, arrow 1].
+		if S.focus == "staging" then
+			panel_remove()
+		else
+			ya.emit("toggle", {})
+			if act == "sspace" then
+				ya.emit("arrow", { 1 })
+			end
+		end
 	elseif act == "j" or act == "k" then
 		-- Focus-scoped: move the sidebar selection (deferred or live per
 		-- `follow`) when the sidebar owns focus, the staging cursor when the
@@ -745,6 +784,12 @@ local function render_staging(area)
 	local total = #sel
 	local visible_h = h - 1 -- row 1 is the divider
 	local focused = S.focus == "staging"
+
+	-- Removals shrink the list under the cursor; clamp so the pill never points
+	-- past the end after an async un-stage.
+	if focused and S.stg.sel and total > 0 and S.stg.sel > total then
+		S.stg.sel = total
+	end
 
 	local first, last = core.window(total, visible_h, focused and S.stg.sel or S.stg.first)
 	S.stg.first = first
