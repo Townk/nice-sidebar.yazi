@@ -319,7 +319,7 @@ local function merge_cfg(opts)
 	local st = opts.staging or {}
 	cfg.staging = {
 		enabled = st.enabled ~= false,
-		max_ratio = st.max_ratio or 0.5,
+		max_ratio = st.max_ratio or 0.4,
 		reveal_on_enter = st.reveal_on_enter ~= false,
 		icon = st.icon or "\239\128\156", -- U+F01C (nf-fa-inbox), UTF-8 bytes
 		clipboard_icon = st.clipboard_icon or "󰅍",
@@ -900,20 +900,20 @@ local publish_icons = ya.sync(function(_, resolved)
 	ui.render()
 end)
 
--- Render the staging panel into `area`: a 2-row header (blank indicator row +
--- the tab bar), then the visible slice of the active lane with a focused cursor
--- pill, plus a right-edge scrollbar when the list overflows. Writes S.stg.vp
--- (visible line -> lane index) and S.stg.first for click/scroll hit-testing.
+-- Render the staging panel into `area`: a 3-row header (▁ top border, tab bar,
+-- ▔ bottom border), then the visible slice of the active lane with a focused
+-- cursor pill, plus a right-edge scrollbar when the list overflows. Writes
+-- S.stg.vp (visible line -> lane index) and S.stg.first for click/scroll tests.
 local function render_staging(area)
 	local w, h = area.w, area.h
-	if w == 0 or h < 2 then
+	if w == 0 or h < 3 then
 		S.stg.vp = {}
 		return {}
 	end
 	local c = S.cfg.colors
 	local lane, list, is_cut = lane_data()
 	local total = #list
-	local visible_h = h - 2 -- row 1 blank spacer, row 2 tab bar
+	local visible_h = h - 3 -- rows 1-3: ▁ top border, tab bar, ▔ bottom border
 	local focused = S.focus == "staging"
 
 	-- Removals / lane switches shrink the list under the cursor; clamp so the
@@ -988,6 +988,22 @@ local function render_staging(area)
 	iparts[#iparts + 1] = ui.Span(" ") -- trailing blank cell
 	lines[1] = ui.Line(iparts)
 	vp[1] = nil
+	-- Row 3: a ▔ underline beneath the active tab's label in its lane colour —
+	-- the tab's bottom border, mirroring the ▁ top border on row 1. The rest of
+	-- the line stays blank (the List clears it), so the active tab reads as boxed.
+	local uparts = {}
+	if active_x and active_w and active_w > 0 then
+		local lo = math.max(1, active_x)
+		local hi = math.min(w - 1, active_x + active_w)
+		if lo > 0 then
+			uparts[#uparts + 1] = ui.Span(string.rep(" ", lo))
+		end
+		if hi > lo then
+			uparts[#uparts + 1] = ui.Span(string.rep("▔", hi - lo)):style(style(active_color))
+		end
+	end
+	lines[3] = ui.Line(uparts)
+	vp[3] = nil
 
 	if total > 0 and visible_h >= 1 then
 		-- Focused: window centres on the cursor. Unfocused: `S.stg.first` is a
@@ -1004,7 +1020,7 @@ local function render_staging(area)
 		local cwd = tostring(cx.active.current.cwd)
 		local home = S.cfg.home
 		local fallback_icon = lane == "clipboard" and S.stg.cfg.clipboard_icon or S.stg.cfg.icon
-		local line_i = 2
+		local line_i = 3
 		local need_icons = false
 		for i = first, last do
 			line_i = line_i + 1
@@ -1061,7 +1077,7 @@ local function render_staging(area)
 		if bar then
 			S.stg.vp = vp
 			local out = { ui.List(lines):area(area) }
-			local track = ui.Rect({ x = area.x + w - 1, y = area.y + 2 + bar.y, w = 1, h = bar.len })
+			local track = ui.Rect({ x = area.x + w - 1, y = area.y + 3 + bar.y, w = 1, h = bar.len })
 			out[#out + 1] = ui.Bar(ui.Edge.RIGHT):area(track):symbol("█"):style(style(c.separator or "darkgray"))
 			return out
 		end
@@ -1154,11 +1170,23 @@ function M:setup(opts)
 				:split(self._area)
 		end
 
-		-- Carve the staging panel out of the bottom of the preview child.
-		-- Preview is children[3] in the preset build order (Parent, Current,
-		-- Preview, Rails, Markers). Shrinking Preview._area shrinks both the
-		-- drawn preview (LAYOUT.preview) and its mouse hit-test rect; the
-		-- Staging child then owns the freed bottom slice.
+		-- Dock the staging panel in the bottom slice of the PREVIEW column, and
+		-- shrink only the preview pane to make room.
+		--
+		-- Yazi draws the file preview (`mgr::Preview`, a Rust widget) AFTER the Lua
+		-- component tree, i.e. on top of it. So the panel can only stay visible if
+		-- the preview content is kept out of its rows — which means shrinking the
+		-- preview pane's area (the previewer draws within LAYOUT.preview). The side
+		-- effect is that the CENTER column would blank its bottom rows: yazi sizes
+		-- the current folder's rendered window (`cx.active.current.window`, see
+		-- yazi-actor/src/lives/folder.rs) by `LAYOUT.preview.height`, not the
+		-- current pane's height. We correct that at the source by overriding
+		-- `Current:redraw` / `Marker:redraw` below to page by the current pane's own
+		-- height, so the center column stays full while only the preview shrinks.
+		--
+		-- Preview is children[3] in the preset order (Parent, Current, Preview,
+		-- Rails, Markers); Staging is appended LAST so it wins the paint order and
+		-- `ya.child_at` mouse hit-testing over the shrunk preview.
 		local orig_build = Tab.build
 		function Tab:build()
 			orig_build(self)
@@ -1173,10 +1201,11 @@ function M:setup(opts)
 					return -- preset drift: bail rather than mis-carve
 				end
 				local a = prev._area
-				-- Size to the ACTIVE lane's rows atop the 2-row header (blank +
-				-- tab bar); auto-switch keeps the active lane non-empty here.
-				local _, list = lane_data()
-				local panel_h = select(1, core.panel_height(#list, a.h, S.stg.cfg.max_ratio, 2))
+				-- Size to the TALLER lane atop the 2-row header (blank + tab bar) so
+				-- switching lanes never resizes the panel (grow-only). Capped at
+				-- `max_ratio` (1/3) of the preview height by core.panel_height.
+				local staged_n, clip_n = lane_counts()
+				local panel_h = select(1, core.panel_height(math.max(staged_n, clip_n), a.h, S.stg.cfg.max_ratio, 3))
 				if panel_h <= 0 then
 					return
 				end
@@ -1292,6 +1321,88 @@ function M:setup(opts)
 		end
 
 		function Parent:scroll() end
+
+		-- The center column renders `cx.active.current.window`, which yazi caps to
+		-- LAYOUT.preview.height (yazi-actor/src/lives/folder.rs, the `None` branch).
+		-- When the staging panel shrinks the preview, that would blank the bottom
+		-- of the center column. Re-page by the current pane's OWN height instead,
+		-- off the full file list, so the column stays full at any preview height.
+		-- Mirrors the preset Current:redraw otherwise (Entity + Linemode + right
+		-- rail), so it tracks yazi's own file-row rendering.
+		function Current:redraw()
+			local folder = self._folder
+			local files = folder.files
+			local n = #files
+			if n == 0 then
+				return self:empty()
+			end
+			local off, h = folder.offset, self._area.h
+			local left, right = {}, {}
+			for i = off + 1, math.min(n, off + h) do
+				local f = files[i]
+				local entity = Entity:new(f)
+				left[#left + 1], right[#right + 1] = entity:redraw(), Linemode:new(f):redraw()
+				local max = math.max(0, self._area.w - right[#right]:width())
+				left[#left]:truncate({ max = max, ellipsis = entity:ellipsis(max) })
+			end
+			return {
+				ui.List(left):area(self._area),
+				ui.Text(right):area(self._area):align(ui.Align.RIGHT),
+			}
+		end
+
+		-- Hit-test against the same current-height window as the redraw above.
+		function Current:click(event, up)
+			if up or event.is_middle then
+				return
+			end
+			local f = self._folder.files[self._folder.offset + (event.y - self._area.y + 1)]
+			if f then
+				Entity:new(f):click(event, up)
+			end
+		end
+
+		-- Selection / yank markers are windowed by LAYOUT.preview.height too; page
+		-- them by the pane's own height so every rendered row keeps its marker.
+		function Marker:redraw()
+			if self._area.w * self._area.h == 0 or not self._folder then
+				return {}
+			end
+			local files = self._folder.files
+			local n = #files
+			if n == 0 then
+				return {}
+			end
+			local off, h = self._folder.offset, self._area.h
+			local elements = {}
+			local append = function(last)
+				if not last[3] then
+					return
+				end
+				local y = math.min(self._area.y + last[1], self._area.y + self._area.h) - 1
+				local rect = ui.Rect({
+					x = self._area.x,
+					y = y,
+					w = 1,
+					h = math.min(1 + last[2] - last[1], self._area.y + self._area.h - y),
+				})
+				elements[#elements + 1] =
+					ui.Bar(ui.Edge.LEFT):area(rect):style(last[3]):symbol(th.mgr.marker_symbol)
+			end
+			local last, row = { 0, 0, nil }, 0
+			for i = off + 1, math.min(n, off + h) do
+				row = row + 1
+				local st = self:style(files[i])
+				if row - last[2] > 1 or last[3] ~= st then
+					append(last)
+					last = { row, row, st }
+				else
+					last[2] = row
+				end
+			end
+			append(last)
+			return elements
+		end
 
 		-- Clicking the center/preview columns hands focus to the panes: run the
 		-- stock click, then blur whichever region held focus. Guarded (blur is a
