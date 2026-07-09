@@ -268,7 +268,7 @@ local S = {
 	viewport = {}, -- visible line number -> row (redraw writes, click reads)
 	last_scan = 0, -- os.time() of the last volume-rescan trigger
 	indicator = nil, -- saved th.indicator.current for the cursor restyle
-	stg = { cfg = nil, lane = "staged", sel = nil, first = 1, area = nil, vp = {} },
+	stg = { cfg = nil, lane = "staged", sel = nil, first = 1, area = nil, vp = {}, icons = {}, icon_pending = false },
 }
 
 local PIN_ICON = "󰉋"
@@ -338,6 +338,19 @@ local function style(color, bold)
 	if bold then
 		s = s:bold()
 	end
+	return s
+end
+
+-- A dimmed variant of `style`: the inactive lane's label wears its own colour
+-- at reduced intensity, so colour alone still reads as "not the active tab".
+local function dim_style(color)
+	local s = ui.Style()
+	pcall(function()
+		if color then
+			s = s:fg(color)
+		end
+		s = s:dim()
+	end)
 	return s
 end
 
@@ -854,6 +867,39 @@ local publish = ya.sync(function(_, sections)
 	ui.render()
 end)
 
+-- Active-lane paths whose icon isn't cached yet — the async resolver's work
+-- list. Runs in the sync VM (reads S + cx).
+local get_icon_targets = ya.sync(function()
+	local out = {}
+	if not (S.cfg and S.stg.cfg) then
+		return out
+	end
+	S.stg.icons = S.stg.icons or {}
+	local _, list = lane_data()
+	for _, p in ipairs(list) do
+		if not S.stg.icons[p] then
+			out[#out + 1] = p
+		end
+	end
+	return out
+end)
+
+-- Merge resolved icons ({ path -> { text, fg } }) into the cache and repaint.
+-- Every requested path gets an entry — an entry with no `text` is a negative
+-- cache that stops the path being re-requested each frame. Always clears the
+-- pending flag so a no-op resolve can't wedge future requests.
+local publish_icons = ya.sync(function(_, resolved)
+	S.stg.icon_pending = false
+	if not S.cfg then
+		return
+	end
+	S.stg.icons = S.stg.icons or {}
+	for path, ic in pairs(resolved) do
+		S.stg.icons[path] = ic
+	end
+	ui.render()
+end)
+
 -- Render the staging panel into `area`: a 2-row header (blank indicator row +
 -- the tab bar), then the visible slice of the active lane with a focused cursor
 -- pill, plus a right-edge scrollbar when the list overflows. Writes S.stg.vp
@@ -876,15 +922,9 @@ local function render_staging(area)
 		S.stg.sel = total
 	end
 
+	S.stg.icons = S.stg.icons or {}
 	local lines, vp = {}, {}
-	local rule = style(c.tab_rule or c.separator or "darkgray")
 	local staged_n, clip_n = lane_counts()
-	local lead, mid, trail = "─ ", " | ", " "
-	-- Measure with throwaway spans: ui.Line consumes the Span userdata, so the
-	-- real spans must be built exactly once, not reused for a width probe.
-	local function tw(s)
-		return ui.Line({ ui.Span(s) }):width()
-	end
 	-- Only lanes with content get a label; the empty lane is hidden. Each seg is
 	-- { text, colour, active }. "stage" carries Yazi's selected-marker colour,
 	-- "clipboard" its yank-marker colour (the cut colour when it is a cut).
@@ -896,43 +936,57 @@ local function render_staging(area)
 		local clip_color = is_cut and (c.clipboard_cut or "red") or (c.clipboard or "green")
 		segs[#segs + 1] = { S.stg.cfg.clipboard_icon .. " clipboard (" .. clip_n .. ")", clip_color, lane == "clipboard" }
 	end
-	-- Row 2: the tab bar. Track the active seg's column offset + width so row 1
-	-- can draw a ▁ underline bar exactly beneath it (the active-lane indicator).
-	local spans = { ui.Span(lead):style(rule) }
-	local x = tw(lead)
-	local used = tw(lead) + tw(trail)
-	local ind_x, ind_w, ind_color
+	-- Row 2: the tab label(s), no rule chrome. The active lane shows in its full
+	-- colour (bold), the inactive one dimmed. Track the active label's column +
+	-- width so row 1 can paint only the bar slice directly above it.
+	local rule = style(c.separator or "darkgray")
+	local function tw(s)
+		return ui.Line({ ui.Span(s) }):width()
+	end
+	local indent, gap = "  ", "   "
+	local lspans = { ui.Span(indent) }
+	local x = tw(indent)
+	local active_x, active_w, active_color
 	for i, seg in ipairs(segs) do
 		if i > 1 then
-			spans[#spans + 1] = ui.Span(mid):style(rule)
-			x = x + tw(mid)
-			used = used + tw(mid)
+			lspans[#lspans + 1] = ui.Span(gap)
+			x = x + tw(gap)
 		end
 		local sw = tw(seg[1])
-		spans[#spans + 1] = ui.Span(seg[1]):style(style(seg[2]))
 		if seg[3] then
-			ind_x, ind_w, ind_color = x, sw, seg[2]
+			active_x, active_w, active_color = x, sw, seg[2]
+			lspans[#lspans + 1] = ui.Span(seg[1]):style(style(seg[2], true))
+		else
+			lspans[#lspans + 1] = ui.Span(seg[1]):style(dim_style(seg[2]))
 		end
 		x = x + sw
-		used = used + sw
 	end
-	spans[#spans + 1] = ui.Span(trail):style(rule)
-	if w > used then
-		spans[#spans + 1] = ui.Span(string.rep("─", w - used)):style(rule)
-	end
-	lines[2] = ui.Line(spans)
+	lines[2] = ui.Line(lspans)
 	vp[2] = nil
-	-- Row 1: the ▁ indicator bar beneath the active tab (in its colour), else blank.
-	if ind_x and ind_w and ind_w > 0 then
-		local iparts = {}
-		if ind_x > 0 then
-			iparts[#iparts + 1] = ui.Span(string.rep(" ", ind_x))
+	-- Row 1: a ▁ divider in dark grey, bordered by a blank first/last cell, with
+	-- only the slice directly above the active tab's label in that lane's colour.
+	local function bar(n, st)
+		if n > 0 then
+			return ui.Span(string.rep("▁", n)):style(st)
 		end
-		iparts[#iparts + 1] = ui.Span(string.rep("▁", ind_w)):style(style(ind_color))
-		lines[1] = ui.Line(iparts)
-	else
-		lines[1] = ui.Line({})
 	end
+	local iparts = { ui.Span(" ") } -- leading blank cell
+	local function push(sp)
+		if sp then
+			iparts[#iparts + 1] = sp
+		end
+	end
+	if active_x and active_w and active_w > 0 then
+		local lo = math.max(1, active_x) -- bar region opens after the blank cell
+		local hi = math.min(w - 1, active_x + active_w) -- ...and closes before it
+		push(bar(lo - 1, rule)) -- dark grey up to the label slice
+		push(bar(hi - lo, style(active_color))) -- the coloured slice above the label
+		push(bar((w - 1) - hi, rule)) -- dark grey out to the trailing blank
+	else
+		push(bar(w - 2, rule))
+	end
+	iparts[#iparts + 1] = ui.Span(" ") -- trailing blank cell
+	lines[1] = ui.Line(iparts)
 	vp[1] = nil
 
 	if total > 0 and visible_h >= 1 then
@@ -949,14 +1003,24 @@ local function render_staging(area)
 		S.stg.first = first
 		local cwd = tostring(cx.active.current.cwd)
 		local home = S.cfg.home
-		local icon = lane == "clipboard" and S.stg.cfg.clipboard_icon or S.stg.cfg.icon
+		local fallback_icon = lane == "clipboard" and S.stg.cfg.clipboard_icon or S.stg.cfg.icon
 		local line_i = 2
+		local need_icons = false
 		for i = first, last do
 			line_i = line_i + 1
-			local shown = core.rel(list[i], cwd, home)
-			local text = icon .. " " .. shown
+			local path = list[i]
+			local shown = core.rel(path, cwd, home)
+			-- The element's own icon (glyph + colour), resolved asynchronously into
+			-- the cache; until it lands, the generic lane glyph stands in.
+			local ic = S.stg.icons[path]
+			if not ic then
+				need_icons = true
+			end
+			local glyph = (ic and ic.text) or fallback_icon
 			local ln
 			if focused and i == S.stg.sel then
+				-- Selected: one uniform pill; the icon shares the pill's colour.
+				local text = glyph .. " " .. shown
 				local body, cap = sel_pill(true)
 				if cap then
 					local open, close = pill_caps()
@@ -973,10 +1037,24 @@ local function render_staging(area)
 					ln = ui.Line({ ui.Span("  " .. core.truncate(text, math.max(1, w - 3))):style(body) })
 				end
 			else
-				ln = ui.Line({ ui.Span("  " .. core.truncate(text, math.max(1, w - 3))):style(style(c.item)) })
+				-- Unselected: icon in its own colour, name in the item colour.
+				local icon_w = ui.Line({ ui.Span(glyph) }):width()
+				local name = core.truncate(shown, math.max(1, w - 3 - icon_w))
+				local icon_style = (ic and ic.fg) and style(ic.fg) or style(c.item)
+				ln = ui.Line({
+					ui.Span("  "),
+					ui.Span(glyph .. " "):style(icon_style),
+					ui.Span(name):style(style(c.item)),
+				})
 			end
 			lines[line_i] = ln
 			vp[line_i] = i
+		end
+		-- Kick an async resolve for any visible path whose icon isn't cached yet.
+		-- Throttled by icon_pending; the emit is best-effort inside redraw.
+		if need_icons and not S.stg.icon_pending then
+			S.stg.icon_pending = true
+			pcall(ya.emit, "plugin", { "nice-sidebar", "icons" })
 		end
 
 		local bar = core.scrollbar(total, visible_h, first)
@@ -1395,6 +1473,86 @@ local function pin()
 	refresh()
 end
 
+-- Coerce whatever `Style:raw().fg` yields — a colour name / hex string, or a
+-- serde `{ Rgb = { r, g, b } }` table — into a string `Style:fg()` accepts.
+-- Returns nil when it can't (the icon then inherits the row colour).
+local function icon_color(fg)
+	local t = type(fg)
+	if t == "string" then
+		return fg
+	elseif t == "table" then
+		local rgb = fg.Rgb or fg.rgb or fg
+		if type(rgb) == "table" and rgb[1] and rgb[2] and rgb[3] then
+			return string.format("#%02x%02x%02x", rgb[1], rgb[2], rgb[3])
+		end
+	end
+	return nil
+end
+
+-- Match a File to its themed icon, tolerating either the current API
+-- (th.icon:match) or the deprecated File:icon() on older builds.
+local function match_icon(file)
+	local ok, ic = pcall(function()
+		return th.icon:match(file)
+	end)
+	if ok and ic then
+		return ic
+	end
+	ok, ic = pcall(function()
+		return file:icon()
+	end)
+	if ok and ic then
+		return ic
+	end
+	return nil
+end
+
+-- Resolve each uncached active-lane path's element icon (glyph + colour), then
+-- publish the batch. This build has no fs.file, so we get real File objects by
+-- listing each item's parent directory once (fs.read_dir) and matching by URL.
+-- Always publishes (even an empty batch) so the pending flag clears.
+local function resolve_icons()
+	local targets = get_icon_targets()
+	if #targets == 0 then
+		publish_icons({})
+		return
+	end
+	-- Group targets by parent dir so each directory is read at most once.
+	local by_dir, resolved = {}, {}
+	for _, path in ipairs(targets) do
+		local dir = path:match("^(.*)/[^/]+$")
+		dir = (dir == nil or dir == "") and "/" or dir
+		by_dir[dir] = by_dir[dir] or {}
+		by_dir[dir][path] = true
+		resolved[path] = {} -- negative default: stops re-requesting on failure
+	end
+	for dir, wanted in pairs(by_dir) do
+		pcall(function()
+			-- resolve=true fully stats each entry (from_follow), so cond-based icon
+			-- rules (exec, link, orphan…) match what Yazi's own file list shows; the
+			-- lightweight default (from_dummy) lacks the cha bits they need.
+			local files = fs.read_dir(Url(dir), { resolve = true })
+			if not files then
+				return
+			end
+			for _, f in ipairs(files) do
+				local p = tostring(f.url)
+				if wanted[p] then
+					local ic = match_icon(f)
+					if ic then
+						local fg
+						pcall(function()
+							fg = icon_color(ic.style:raw().fg)
+						end)
+						resolved[p] = { text = ic.text, fg = fg }
+					end
+				end
+			end
+		end)
+	end
+	publish_icons(resolved)
+end
+
 -- ----------------------------------------------------------------- entry --
 -- Runs in the async context. Keymap args are POSITIONAL
 -- ("plugin nice-sidebar prev") — yazi 26.5 silently drops `--args=` forms.
@@ -1406,6 +1564,8 @@ function M:entry(job)
 		refresh()
 	elseif act == "pin" then
 		pin()
+	elseif act == "icons" then
+		resolve_icons()
 	elseif act then
 		nav(act)
 	end
